@@ -383,3 +383,14 @@
 - 核对来源：https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site ，官方流程要求从仓库 Settings 的 Pages 进入发布来源设置。
 - 实际改动：仅追加并同步请求日志，没有修改应用、构建文件、仓库设置、ECS 或 RDS，不公开上传用户设置截图。
 - 验证与状态：人工核对截图及 GitHub 官方说明；本轮无可执行代码变化，不运行前端或 Rust 测试。等待用户进入 Pages 设置并提供配置结果，未声称已完成部署。
+
+### REQ-0033 · 2026-10-21 · 验收 GitHub Pages 公开演示上线
+
+- 用户请求：反馈 Pages 设置操作“完成”，继续核对实际公开演示。
+- 初次检查：公开地址开始仍返回 HTTP 404，未立即宣称上线；仓库 docs/index.html 返回 HTTP 200，文件存在且标题为 SourceLens 交互演示。
+- 部署证据：通过 GitHub 只读连接查询到 pages build and deployment 运行 39606276498，状态 completed、结论 success，部署来源提交为 9e33ecdfb13c8893721f7ed0144c69144f0664b0。记录地址：https://github.com/Fallsnow-Poca/video-killer/actions/runs/39606276498 。随后再次匿名请求 https://fallsnow-poca.github.io/video-killer/ 返回 HTTP 200，HTML 包含预期演示标题、相对静态资源引用及禁止后台联网的 CSP。
+- 资源验收：线上 JavaScript、CSS、PRIVACY.txt 和 SHA256SUMS.txt 均返回 HTTP 200。不把 raw 文件下载成功替代为网站上线证据，本次直接核对 Pages 域名。
+- 浏览器验收：使用 video-source-analyzer 技能核对项目演示边界，为本地独立验收脚本增加固定公开网址的 --live 模式；隔离 Edge 对真实线上页面验证电脑/手机布局、模拟声明、无密钥输入、图片/视频/BGM/记忆库模拟流程、任务删除及 CSP 网络阻断，全部通过，零运行时异常；已人工查看线上电脑与手机截图，仅保存在本地缓存，不额外公开上传。
+- 实际改动：仅修改本地浏览器验收脚本并追加本日志，未修改应用源码、线上静态产物、Pages 设置、数据库或 ECS，无真实提供商调用。不新增工作流、不创建标签或发布安装包。
+- 测试范围：执行 node scripts/smoke-public-demo.mjs --live 通过；本轮没有前端应用或 Rust 改动，不重跑 npm 构建或 Cargo 测试。
+- 最终状态：公开交互演示上线验收通过，可分享 https://fallsnow-poca.github.io/video-killer/ 。页面仅模拟，不支持真实分析或跨用户云端同步；本次成功不代表阿里云真实后端已部署。日志按既有授权同步，未来变更仍在用户请求期间更新，不声称后台持续监控。
