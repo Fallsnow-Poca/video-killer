@@ -374,3 +374,12 @@
 - 最终本地验收：上述检查条件修正后，最终构建的隔离 Edge 全流程检查通过，零运行时异常；再次核对手机截图，无旧提示遮挡导航。正常构建与演示构建均通过；没有 Rust 改动，不运行 Cargo 测试。上传 dry-run 通过，允许变更明确限定为 REQUEST_LOG.md 和 docs 下 8 个静态演示文件，没有包含完整源码或原始媒体。
 - 发布验收补充：专用部署密钥正常推送成功，远端分支提交经核对为 60c620d82e07626c29ab0f463b2d8313a6e65b04，仅变更本日志及上述 8 个静态文件；此前批准的首页 PNG 保持不变。匿名请求远端演示 HTML 与 SHA-256 清单均为 HTTP 200，内容哈希与本地产物一致。
 - 最终状态：静态演示产物已公开上传；预期 Pages 网址复查仍为 HTTP 404，网站尚未上线，不能将 raw 文件可下载当作网页可用。已请仓库所有者在 Pages 管理页选择 main 与 /docs 保存后提供截图，再进行部署及外部页面验收。本轮不要求开放 ECS 网站端口或额外购买服务器。
+
+### REQ-0032 · 2026-10-21 · 定位 Pages 发布来源 Source
+
+- 用户请求：提供仓库 Settings 截图，询问 Source 在哪里。
+- 截图验收：当前选中的是 General，并非 Pages；左侧 Code, planning, and automation 分组中可见 Pages，位于 Codespaces 下方。截图不能证明 Pages 发布来源已设置或网站已上线。
+- 本次指导：先点击左侧 Pages，或直接打开该仓库 settings/pages；随后在 Build and deployment 区域找到 Source，选择 Deploy from a branch，再选择 main 与 /docs 并保存。若进入后界面不同，提供 Pages 截图再核对，不修改 General 中其他设置。
+- 核对来源：https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site ，官方流程要求从仓库 Settings 的 Pages 进入发布来源设置。
+- 实际改动：仅追加并同步请求日志，没有修改应用、构建文件、仓库设置、ECS 或 RDS，不公开上传用户设置截图。
+- 验证与状态：人工核对截图及 GitHub 官方说明；本轮无可执行代码变化，不运行前端或 Rust 测试。等待用户进入 Pages 设置并提供配置结果，未声称已完成部署。
