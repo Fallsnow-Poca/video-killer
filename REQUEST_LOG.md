@@ -626,3 +626,13 @@
 - 服务器验证步骤：新用户创建后显示 id 和非秘密 passwd 元数据，以该用户执行 Node 版本与 main.mjs 语法检查，并只读显示不含凭据的服务单元模板。不读取或显示实际环境凭据，不安装/启用服务单元，不启动 API，不运行数据库迁移。
 - 官方依据：https://manpages.ubuntu.com/manpages/jammy/man8/useradd.8.html 说明 system/user-group/no-create-home/shell 选项及默认禁用密码；本轮未更改数据库权限、密码、白名单或安全组。
 - 实际动作与状态：代理只核对本地文件、截图和官方资料并追加、按授权同步日志，没有替用户创建系统账号、运行服务器语法检查或读取密码；没有本地应用代码变化，不重跑应用测试。等待系统用户与非 root 执行检查结果，再准备私密环境配置与修正服务单元；API、HTTPS、设备分配及端到端验收仍未完成。
+
+### REQ-0057 · 2026-10-22 · 核对系统用户准备结果并修正部署模板中的 Node 路径
+
+- 用户请求：提供系统用户准备脚本末尾和服务单元内容截图，继续部署。
+- 截图验收：末尾出现服务用户创建及检查完成提示并返回终端；结合此前遇错即停脚本，可确认执行到该提示。截图未显示 UID/GID 与 Node 版本明细，不编造其数值；可直接看到模板 User/Group 为服务身份、ExecStart 仍使用错误的 /usr/bin/node。服务尚未启动，不能将模板展示视为已安装常驻服务。
+- 技能与核对：使用 video-source-analyzer，复核既有模板及官方 systemd-analyze/service 说明；此前实际 Node 位于 /usr/local/bin/node，须在启用前改正。保持原有非 root 身份、工作目录、环境文件路径和加固配置，不放宽权限或改用 root 解决路径问题。
+- 内容校验：从原私密 ZIP 核对模板哈希 af3a37aca2e84f43feb43537bad5ebe54b506094aa05b519e1defe320797267d；本地只在内存中模拟替换 ExecStart 的 Node 路径，得到预期修正后哈希 45127506496fe24afdecbf4fac5fa97e4744008bddb9866af6907e418875733a，没有改动本地模板或重打包。
+- 本次指导：在服务器先检查原模板哈希、节点可执行文件和不存在同名原始备份，再将原模板复制为 .original，机械替换唯一的 ExecStart 路径，复核修正后哈希并运行 systemd-analyze verify，仅打印非秘密的关键单元字段。备份或哈希异常先停止，不删除、不强制覆盖或反复执行。
+- 验证边界：配置验证检查语法、部分依赖与可执行路径，不证明环境凭据存在、数据库业务正常或后台服务已运行。参考 https://www.freedesktop.org/software/systemd/man/latest/systemd-analyze.html 和 https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html 。此步仅准备部署目录中的模板，不安装到系统单元目录、不 daemon-reload、不 enable/start 服务，不读取实际环境文件。
+- 实际改动与状态：代理只做本地只读文件/归档/内存哈希核对及日志追加和授权同步，没有替用户修改服务器文件、安装服务或输入密码。本地应用和配置未变化，不运行前端、Rust 或后端测试；等待服务器修改和配置验证结果，再准备 root-only 环境文件与常驻服务安装。API、HTTPS、设备分配和端到端验收仍未完成。
