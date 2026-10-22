@@ -579,3 +579,12 @@
 - 本次指导：使用独立子 shell、psql -X/-W/ON_ERROR_STOP 和 --single-transaction 执行无自带事务的账号脚本及只读权限检查，连接级设置读写和锁等待/语句超时。先输入管理员原密码，再为服务专用账号输入并确认新密码，全部不回显；新密码由用户私下保管，不发送聊天或写命令历史。提示遇错停止，不重跑旧迁移、不删角色、不自动重置已有密码。
 - 检查预期：新运行账号应 login=true、superuser/bypassrls/createdb/createrole=false、为 API 组成员，且不是当前数据库或历史 schema 所有者；输出待用户验收，不提前声称创建成功。成功之后还需以该账号实际连接验证，再配置服务环境。
 - 官方依据与实际动作：核对 PostgreSQL psql 文档 https://www.postgresql.org/docs/14/app-psql.html 的 --single-transaction 和密码交互方式；本轮本地只读检查文件/归档并追加、同步日志，没有修改应用/SQL、替用户执行真实创建账号、读取密码或启动服务。无可执行文件变化，不重跑本地测试；历史 API、HTTPS、设备分配、两设备联调与客户端发行仍未完成。
+
+### REQ-0052 · 2026-10-22 · 处理服务登录账号已存在并改为只读审查
+
+- 用户请求：提供创建服务登录账号时的输出，脚本校验 OK 后在保护检查处报告 sourcelens_api already exists: inspect it instead of overwriting。
+- 截图验收：该调用在创建角色和设置密码之前停止，没有覆盖现有账号或密码，也没有重新执行上一条表迁移。只能确认账号当前已存在，不能据此认定是谁或哪次操作创建、密码已设置、账号权限合格或服务已启动。REQ-0051 中账号创建和检查属于待执行指导，未在本轮验收为成功。
+- 技能与核对：使用 video-source-analyzer，复核架构与创建脚本的拒绝复用机制；保留这一保护，不改成 IF NOT EXISTS、删除角色、无条件授权或重置密码，也不要求用户重复运行创建脚本。
+- 本次指导：用管理员隐藏密码登录现有私网数据库，在连接级强制只读状态下，分别查询现有登录账号的 LOGIN/SUPERUSER/BYPASSRLS/CREATEDB/CREATEROLE/REPLICATION 与 API 组成员标志；列出直接或间接所属角色及其高权限标志，并核对当前数据库/历史 schema 所有权。只查非密码元数据，不读 pg_authid 密码摘要或配置凭据；等待结果后决定是否可复用，不先做修改。
+- 来源与验证：核对 PostgreSQL 17 官方 pg_roles 和 pg_auth_members 说明 https://www.postgresql.org/docs/17/view-pg-roles.html 及 https://www.postgresql.org/docs/17/catalog-pg-auth-members.html 。角色成员关系在实例范围共享，不能以只检查一个数据库内是否有表来推断账号安全。
+- 实际改动与状态：只追加并按授权同步请求日志，没有改变本地应用、SQL、服务器或数据库；代理未执行真实权限查询、读取密码、认证现有服务账号或重跑创建。文档性更新不运行本地应用测试。等待只读权限结果，之后还需实际验证服务账号连接；已提交的表迁移不重复执行，API、HTTPS、设备分配和端到端验收仍未完成。
