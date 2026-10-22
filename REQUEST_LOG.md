@@ -588,3 +588,13 @@
 - 本次指导：用管理员隐藏密码登录现有私网数据库，在连接级强制只读状态下，分别查询现有登录账号的 LOGIN/SUPERUSER/BYPASSRLS/CREATEDB/CREATEROLE/REPLICATION 与 API 组成员标志；列出直接或间接所属角色及其高权限标志，并核对当前数据库/历史 schema 所有权。只查非密码元数据，不读 pg_authid 密码摘要或配置凭据；等待结果后决定是否可复用，不先做修改。
 - 来源与验证：核对 PostgreSQL 17 官方 pg_roles 和 pg_auth_members 说明 https://www.postgresql.org/docs/17/view-pg-roles.html 及 https://www.postgresql.org/docs/17/catalog-pg-auth-members.html 。角色成员关系在实例范围共享，不能以只检查一个数据库内是否有表来推断账号安全。
 - 实际改动与状态：只追加并按授权同步请求日志，没有改变本地应用、SQL、服务器或数据库；代理未执行真实权限查询、读取密码、认证现有服务账号或重跑创建。文档性更新不运行本地应用测试。等待只读权限结果，之后还需实际验证服务账号连接；已提交的表迁移不重复执行，API、HTTPS、设备分配和端到端验收仍未完成。
+
+### REQ-0053 · 2026-10-22 · 验收现有运行账号权限并准备实际只读登录验证
+
+- 用户请求：提供现有服务账号权限审查的三组输出截图，继续部署。
+- 截图验收：项目目标库正确；sourcelens_api 的 LOGIN=true，SUPERUSER/BYPASSRLS/CREATEDB/CREATEROLE/REPLICATION 均为 false，API 组成员标志 true；直接或间接所属角色仅显示 sourcelens_history_api，其高权限标志均 false；非当前数据库所有者与非历史 schema 所有者均为 true。可验收这些元数据符合当前运行账号要求，不需要重建账号或重复迁移。
+- 技能与核对：使用 video-source-analyzer，复核架构边界及服务事务逻辑。后端会在事务内 SET LOCAL ROLE 到 API 组并清空设备身份，元数据成员标志不代替实际切换权限的验证。
+- 下一步指导：通过现有私网连接，以服务账号本身及其已保存的独立密码登录，连接级设为只读；在只读事务中切换 API 组、仅清空本事务设备上下文，读取 session_user/current_user/只读状态及无设备身份时的事件/设备可见行数，然后结束事务。不创建表、角色或业务记录，不修改密码或数据库全局配置。
+- 密码边界：此处使用服务账号独立密码，不是管理员密码；若用户未设置或不记得，先反馈这一事实，不反复猜测、不请求其发送密码、不在未复核授权时重置现有账号。
+- 验证边界：预期登录用户和活动权限组正确、只读为 on、无身份可见计数为 0；结果尚待服务器执行确认。即便计数为 0，也不能替代有真实两设备数据时的越权/共享联调，不声称当前所有安全场景已通过。
+- 来源及实际动作：核对 PostgreSQL 17 SET ROLE 和 RLS 官方说明 https://www.postgresql.org/docs/17/sql-set-role.html 、https://www.postgresql.org/docs/17/ddl-rowsecurity.html 。本轮只读检查本地资料、人工核对截图并追加、同步日志；代理未执行真实服务账号登录、读取密码或修改应用/服务配置，无可执行代码变化，不重跑本地测试。服务环境、常驻 API、HTTPS、设备发放与客户端发行仍待后续完成。
