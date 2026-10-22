@@ -568,3 +568,14 @@
 - 执行控制：独立子 shell 遇错即停，psql -X/-W/ON_ERROR_STOP，连接目标数据库；PGOPTIONS 仅该连接关闭此前的默认只读限制，设置短锁等待与语句超时，不修改数据库全局参数。文件自带 BEGIN/COMMIT，不叠加 --single-transaction；提交前发生错误且退出会回滚未提交变更，不能把 COMMIT 后检查出错误称为迁移已回滚。任何错误先保留脱敏输出，不自行重跑、删表、绕过权限或恢复备份。
 - 迁移后检查：同一次 psql 调用在 -f 后分别用 -c 列出专用表的 RLS 标志和 API 组权限，待用户提供 COMMIT 与检查结果再验收。此刻代理尚未执行真实迁移，不能提前宣称 6 表或策略已在 RDS 生效。
 - 依据与改动：参考 PostgreSQL 官方 psql 与事务文档 https://www.postgresql.org/docs/14/app-psql.html 及 https://www.postgresql.org/docs/17/tutorial-transactions.html 。本地仅追加并按授权同步日志，无应用或迁移文件修改、不公开备份截图/实例编号/部署包。等待真实执行结果；服务配置、最小权限登录、HTTPS、两设备联调和客户端发行仍待完成。
+
+### REQ-0051 · 2026-10-22 · 验收真实迁移并准备专用数据库运行账号
+
+- 用户请求：提供执行迁移后的完整 Workbench 输出截图，继续部署。
+- 截图验收：迁移文件校验 OK，创建语句执行后明确 COMMIT；六张专用表 consents、devices、events、queries、shared_queries、withdrawals 均 rls_enabled=true，除 devices 外五表 rls_forced=true。API 组 sourcelens_history_api 的登录、超级用户、绕过 RLS、建库、建角色均为 false。实际迁移已提交，后续不能再称云端 schema 未创建或重复执行该迁移。
+- RLS 边界：devices 的 rls_forced=false 与既有专用安全定义身份解析函数及受限列权限设计一致，不是整个表未启用 RLS；本次只验收可见配置，不把这些输出替代真实跨用户越权/共享联调。
+- 技能与复核：使用 video-source-analyzer，阅读架构和既有 create-runtime-login.psql。创建脚本拒绝复用同名角色，创建低权限 LOGIN 并授予 API 组，通过 psql 的隐藏交互密码命令设置独立密码，不把管理员凭据用于常驻服务。
+- 文件校验：归档中的创建脚本与本地文件 SHA-256 一致，均为 d689bed89db2d00ddd811991c3714d45db8a1f0a6179592521c2aac768d200e5；指导服务器先核对此值，再执行已批准私密部署范围内的账号初始化。
+- 本次指导：使用独立子 shell、psql -X/-W/ON_ERROR_STOP 和 --single-transaction 执行无自带事务的账号脚本及只读权限检查，连接级设置读写和锁等待/语句超时。先输入管理员原密码，再为服务专用账号输入并确认新密码，全部不回显；新密码由用户私下保管，不发送聊天或写命令历史。提示遇错停止，不重跑旧迁移、不删角色、不自动重置已有密码。
+- 检查预期：新运行账号应 login=true、superuser/bypassrls/createdb/createrole=false、为 API 组成员，且不是当前数据库或历史 schema 所有者；输出待用户验收，不提前声称创建成功。成功之后还需以该账号实际连接验证，再配置服务环境。
+- 官方依据与实际动作：核对 PostgreSQL psql 文档 https://www.postgresql.org/docs/14/app-psql.html 的 --single-transaction 和密码交互方式；本轮本地只读检查文件/归档并追加、同步日志，没有修改应用/SQL、替用户执行真实创建账号、读取密码或启动服务。无可执行文件变化，不重跑本地测试；历史 API、HTTPS、设备分配、两设备联调与客户端发行仍未完成。
