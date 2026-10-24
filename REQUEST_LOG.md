@@ -985,3 +985,21 @@
 - 本机记录复核：既有浏览器 JSON 的 cloudbaseBehavior=true 实际由回环、临时库/合成用户、secure=false 的本机脚本生成，不能作为云端部署证据。本轮未重跑前端/Rust/后端套件，未调用真实提供商、连接云库或上传媒体；此前通过结论仅保留其当时的本地测试范围。
 - 实际变更：新增本地架构验收报告并在根 README 明确未完成状态；只有文档和请求日志变更，没有修改应用行为、SQL、云配置或重新打包。报告列出目标 PG 兼容、私有存储、真实构建部署与 A/B/重建验收的待完成工作，不另行要求用户重复授权普通项目部署。
 - 收尾与同步：本次验收答复已准备完成；实际迁移目标仍未完成，后续应继续按既有可写接入/部署授权处理。先核对远端日志是否有中断轮独立更新，保留两侧历史、不强推；公开范围仍仅脱敏日志和既有批准主页图，验收报告/源码/配置/截图均不公开同步，失败则明确远端未更新。
+
+### REQ-0094 · 2026-10-24 · 将当前对话用于 SourceLens 界面删改
+
+- 用户请求：明确本对话用于 SourceLens 界面的删除与修改，尚未指定具体页面、元素或目标样式。
+- 实际动作：阅读仓库约定、video-source-analyzer 技能、当前 App 入口和网页版说明，确认可在此对话继续处理界面调整；提示可直接描述修改或用截图标注位置。
+- 变更与验证：仅追加本请求日志，没有修改应用代码、配置或界面，没有启动服务、调用提供商或部署；文档性记录不运行前端、Rust 或后端测试。
+- 状态及下一步：用途确认完成，待用户给出具体删改内容后实施和验证。按既有授权预检并同步脱敏日志及已批准主页图；同步结果以工具回执为准，失败时保留本地记录并说明远端未更新。
+
+### REQ-0095 · 2026-10-24 · 尝试将 SourceLens 完整部署到 CloudBase 并验收
+
+- 用户请求：把本项目（SourceLens）完整部署到 CloudBase 并完成验收。沿用既有边界：不做真实提供商调用、不上传原件、不改平台系统角色；用户未要求新购或升配。
+- 环境只读探测：账号下仅一个环境 `fallsnow-d4gwz9mht57ea9014`（ap-shanghai，体验版，2027-04-01 到期）。环境详情显示 RuntimeMode=postgresql，PostgreSQL 实例 `postgres-j5ui9utg` 的 TenantType=**SHARED**（平台注明仅支持 SDK/网关访问）；`tcbr DescribeEnvBaseInfo` 返回 **IsExist=false**，即云托管未开通；静态托管已 online，域名 `…tcloudbaseapp.com` 路由启用，根目录已有 WordWorld 站点文件（index.html、assets/、sprites/ 等）。
+- 范围判断：网页版真实后端依赖 Node + `pg` 直连、私有 CFS 目录与分片上传，在「云托管未开通 + PG 共享实例无 TCP 直连 + 本机无 Docker」三条限制下无法在该环境运行；故本轮只部署可独立运行且仓库既有的编译静态演示版（`dist/demo`，CSP `connect-src 'none'`）到静态托管 `/sourcelens/` 子路径，不覆盖根路由现有站点。
+- 实际动作：`npm run build:demo` 重新构建（`tsc -b` 零错误，1600 模块，11.37s，产物 index.html 0.99kB / CSS 27.19kB / JS 181.89kB，隐私扫描通过）；`manageHosting upload` 上传 8 个文件到 `sourcelens/`；未创建云托管服务、未改路由、未开启数据库公网、未改动其他云资源。
+- 验收证据：线上 7 个文件与本地构建 SHA-256 全部 MATCH（index.html 988B、JS 181893B、CSS 27186B、PRIVACY/LICENSE/THIRD_PARTY_NOTICES/SHA256SUMS）；HTTP 200，Content-Type 依次为 text/html、application/javascript、text/css、text/plain；目录索引 `/sourcelens/` 生效。新增 `scripts/smoke-hosted-demo.mjs`，用本机无头 Edge（CDP）对线上地址做真浏览器验收：标题「SourceLens · 交互演示」，桌面 1440×1000 与移动 390×844 无横向溢出，模拟检索/音乐/导出/删除/公共记忆库流程全部走通，「服务设置」无任何输入框，CSP 在网络层拦截探测请求，零运行时异常、零失败响应、无跨域请求 → PASS。
+- 已知限制：`*.tcloudbaseapp.com` 为开发测试域名，浏览器首次访问会出现 CloudBase「风险提醒」中间页，需点「确定访问」才能进入；脚本已显式记录并按该门禁点击通过，但真实访客仍会看到此页，正式对外需绑定已备案自定义域名。
+- 未完成事项：网页版（账号登录、私有原件、PostgreSQL RLS、候选查询）仍未部署到 CloudBase——云托管需在控制台开通并计费、PG 需可用直连或改为平台原生 SDK/网关访问并重写数据层、私有原件需 CFS 或 COS 适配；本机亦无 Docker，镜像构建未验证。本次**不构成「完整部署」**，仅验收静态演示上线。
+- 遗留与下一步：等待用户选择路线——①控制台开通云托管 + 可直连 PG 后按 `server/web/deploy/cloudbase/README.md` 部署容器；②保持共享 PG，将数据层改为 CloudBase 原生访问（工作量大，需单独排期）；③暂时维持静态演示 + 本地/ECS 真实后端。部署与验收明细见 `docs/CLOUDBASE_DEMO_DEPLOY_2026-10-24.md`，浏览器截图存于 `.local-tools/cloudbase-qa/`（不公开同步）。本轮未提交 Git，未改动既有未提交源码。
