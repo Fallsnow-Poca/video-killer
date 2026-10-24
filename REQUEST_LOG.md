@@ -1003,3 +1003,36 @@
 - 已知限制：`*.tcloudbaseapp.com` 为开发测试域名，浏览器首次访问会出现 CloudBase「风险提醒」中间页，需点「确定访问」才能进入；脚本已显式记录并按该门禁点击通过，但真实访客仍会看到此页，正式对外需绑定已备案自定义域名。
 - 未完成事项：网页版（账号登录、私有原件、PostgreSQL RLS、候选查询）仍未部署到 CloudBase——云托管需在控制台开通并计费、PG 需可用直连或改为平台原生 SDK/网关访问并重写数据层、私有原件需 CFS 或 COS 适配；本机亦无 Docker，镜像构建未验证。本次**不构成「完整部署」**，仅验收静态演示上线。
 - 遗留与下一步：等待用户选择路线——①控制台开通云托管 + 可直连 PG 后按 `server/web/deploy/cloudbase/README.md` 部署容器；②保持共享 PG，将数据层改为 CloudBase 原生访问（工作量大，需单独排期）；③暂时维持静态演示 + 本地/ECS 真实后端。部署与验收明细见 `docs/CLOUDBASE_DEMO_DEPLOY_2026-10-24.md`，浏览器截图存于 `.local-tools/cloudbase-qa/`（不公开同步）。本轮未提交 Git，未改动既有未提交源码。
+
+### REQ-0096 · 2026-10-24 · 更改规则：落地网页工程执行总指令与交接记录体系
+
+- 用户请求：下发《WorkBuddy 网页工程执行总指令》与《AI_HANDOFF.md》模板，要求今后按该规则执行工程工作并维护固定交付记录。规则本身未指定具体功能改动。
+- 规则落地：新增 `EXECUTION_RULES.md` 作为权威规则文本（原样保留执行原则、开发任务、6 份强制交付文件、部署与安全限制、交付格式），并补充与既有 `AGENTS.md` 的优先级关系及冲突处理流程；在 `AGENTS.md` 开头追加指针式章节，未删除或改写任何既有产品不变量与隐私条款。
+- 交接体系：按用户模板新建 `AI_HANDOFF.md`，填入当前真实状态（分支 `main`、HEAD `fea548e`、20 个已修改 + 37 个未跟踪条目、CloudBase 静态演示已上线而网页版后端未部署、三条云端硬阻塞、下一位 AI 起点与禁止覆盖项）。
+- 强制交付文件：新建 `implementation-log.md`、`test-results.md`、`build-log.txt`、`deployment-log.md`、`acceptance-report.md`、`issues.md`，内容均基于本轮实测而非推断。
+- 开工检查与实际执行：只读读取 `AGENTS.md`、`README.md`、`server/web/README.md`、`docs/CLOUDBASE_DEMO_DEPLOY_2026-10-24.md` 及本日志；核对 Git 分支/HEAD/未提交清单；执行 `npm test`（10 文件 / 32 用例全通过）、`npm run build`（成功，1600 模块，12.77s，产物 `dist/web`）、`npm --prefix server test`（第 1 次 15/16，第 2 次 16/16）、失败用例单跑（通过）。原始日志与去 ANSI 版本保存在 `.local-tools/logs/`，该目录被 Git 忽略。
+- 失败与判定：首轮全量失败项为用例 11 `background video processing ... polled to completion`，返回 `partial` 且错误为「此时间点未解码出画面」，属既有降级逻辑按设计触发；单跑与第二次全量通过，故判定为不稳定用例而非确定性缺陷，未修改任何后端代码，已记入 `issues.md` ISS-001 待裁决。
+- 变更范围：仅新增/修改 Markdown 与纯文本记录（8 个新增根目录文件 + `AGENTS.md` + 本日志），未触碰 `src/`、`server/`、`src-tauri/`、`config/`、SQL、云资源；未部署、未开数据库公网、未改系统角色、未开启真实提供商、未上传媒体、未运行 `npm run dev`，因此本轮无浏览器截图。
+- 未验证项：`cargo test`、真浏览器 `scripts/smoke-web.mjs`、桌面/移动端响应式复验、真实提供商调用、云端网页版后端连通与备份/回滚方案，均已在 `test-results.md` 与 `acceptance-report.md` 标记「未验证」。
+- 状态及下一步：本轮规则落地完成，验收结论 A 组 9/9 通过、B 组 4 通过 / 1 失败（网页版未部署，属既有阻塞）/ 7 未验证。本轮未提交 Git、未做公开同步；待用户裁决三件事——是否修复 ISS-001、CloudBase 走 A/B/C 哪条路线、8 份新文件是否提交并按既有授权同步脱敏日志。
+
+### REQ-0097 · 2026-10-24 · 将 SourceLens 完整部署到 CloudBase 并验收
+
+- 用户请求：把该项目完整部署在 CloudBase 上并验收。属明确部署授权，但不含新购数据库实例或改动平台系统角色。
+- 云资源实际变更：`manageCloudRun(initEnv, Trial)` 开通云托管（此前 `unopened`，之后 `envStatus=normal/isExist=true`）；新建 container 型服务 `sourcelens-web`（CPU 0.5 / Mem 1 / Min1-Max1 / Port 8080 / PUBLIC），公网服务地址已生成（详见私有部署记录，无健康版本）。未删除任何资源，未改静态托管文件与网关路由。
+- 构建链路：`npm run web:package:cloudbase` 生成私有包（33 文件 / 453 KB / SHA256SUMS.txt）；`manageCloudRun(deploy)` 云端源码构建通过，`check_build_image : succ`（21:11:52，约 2 分 55 秒），镜像已生成（私有标识仅留本地部署记录）。证明无本地 Docker 也可完成构建。
+- 失败事实：容器 `Back-off restarting failed container`；服务 `OnlineVersionInfos: []`、版本 `creating`、`HasTraffic=false`，云端无可用版本。
+- 根因（均为实测回执，非推断）：① CFS 不可用——`cfs:DescribeCfsFileSystems` 返回 `request unauthorized`（环境级凭据无跨产品权限），`updateConfig(VolumesConf)` 被拒（`Items.0.VolumesConf.0.VolumeName is not recognized`）；② PostgreSQL 不可用——实例 `TenantType=SHARED` 仅支持 SDK/网关，只读 SQL 实测 `ssl=off、listen=*`（私网地址/端口仅留本地部署记录），与 `server/web/runtime.mjs:18-19` 强制的 `PGSSLMODE=verify-full` 直接冲突，且目标库无可创建的用户角色；③ `WEB_ORIGIN` 未配置（可配，但解决不了①②）。
+- 未做与未验证：未执行数据库迁移、未建 schema/角色/管理员账号、未配网关路由与自定义域名、未做登录/上传/截图/候选查询/删除等业务验收、未做备份回滚演练。因此本轮**不构成完整部署，不得记为上线成功**。
+- 拒绝的降级手段：关闭 `WEB_PLATFORM=cloudbase`、把原件写进容器临时盘、降低 `PGSSLMODE` 三项都能让页面「打开」，但会破坏 `AGENTS.md` 与 `runtime.mjs` 写死的隐私/持久化约束，按执行总指令 §一.2 与 §五未采用。
+- 记录更新：`deployment-log.md`（新增记录 4）、`test-results.md`（D1–D9）、`build-log.txt`（云端构建实录）、`acceptance-report.md`（C1–C17：5 通过 / 5 失败 / 7 未验证）、`issues.md`（ISS-002/003 状态修正 + 新增 ISS-010/011/012/013）、`AI_HANDOFF.md`、`implementation-log.md`。未改任何应用代码。
+- 状态及下一步：部署失败、验收未通过。需用户二选一解锁：① 授权 CFS（设备码登录取得账号级凭据，或控制台建上海 CFS 后提供文件系统 ID 与 VPC/子网）；② 决定 PG 路线（专属 PG / 原生网关 / 内嵌 PGlite on CFS）。服务 `sourcelens-web` 当前处于重启状态，是否保留或删除待用户指示。
+
+### REQ-0098 · 2026-10-24 · 初始化 Codex 与 WorkBuddy 长期双向协作机制
+
+- 用户请求：追加永久项目协作规则，读取和保留现有文件，核对真实项目/Git，补齐唯一主交接日志、详细日志目录和 WorkBuddy 兼容入口，后续每项任务默认先读、检查、执行、验证并记录。
+- 实际动作：读取既有规则、双方可用记录、源码相关入口/包清单和部署说明；基线为 main、fea548e、20 个跟踪修改及 43 个未跟踪条目，无 Git 合并冲突。发现上一轮的 37 个未跟踪计数已过时，保留原文并追加更正，不覆盖既有工作。
+- 规则与文件：追加 AGENTS.md 和 EXECUTION_RULES.md；补齐 AI_HANDOFF.md 的基础信息/当前状态/最新执行/下一位说明/倒序历史，保留此前完整原文；新增 WorkBuddy 项目记忆入口、统一日志协议与字段模板、开发/测试/部署三类详细记录；更新六份交付记录。不修改应用源码、业务配置、SQL 或云资源，没有删除文件或提交整个工作区。
+- 验证与状态：初始化文档核验完成；18 份协作文本、42 项检查通过，严格 UTF-8、相对链接、两版交接原文保留、顺序请求及变更范围检查通过，Git 仍为 main/fea548e、20 M + 45 ??。138 个非本任务/非并发记忆的基线文件字节不变；WorkBuddy 并发记忆更新另行留存，未由本轮覆盖。本次仅文档/AI 工作规则变更，不重跑前端、Rust、后端测试或构建，也不执行部署、数据库操作、真实提供商或媒体上传；历史通过结果不算本次重新验证。
+- 同步边界：官方说明支持 AGENTS.md 与项目级记忆文件；WorkBuddy 客户端的真实加载/写回尚未验证。优先同机共享目录；异机需授权的私有 Git 仓库。公开仓库既有白名单不扩张，本次主交接日志及源码不公开，公开请求日志受审查权限预检通过，仅允许 REQUEST_LOG.md，正式同步结果以本地部署记录和远端回读回执为准；检测到 WorkBuddy 并发写入并占用原临时编号，本次顺延 REQ-0098，保留双方历史，不静默覆盖。
+- 同步前隐私处理：只对尚未上传的 REQ-0097 新增条目脱敏内部网络和账号/镜像标识，不改变部署失败事实；未脱敏原文及双方差异留于本地私有证据。仅公开请求日志，不公开主交接或源码。
