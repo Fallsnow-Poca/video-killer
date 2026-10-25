@@ -1169,3 +1169,199 @@
 - 用户请求打开本地应用。已读规则、技能、双方最新记录与真实启动脚本；main/fea548e既有dirty状态保留。本轮只检查/启动本地服务并打开页面，不修改业务代码，不重建账号、不删除数据、不接云或调用提供商；优先复用已运行服务，避免双进程PGlite。最终状态与访问检查另补。
 
 - 收尾：已启动本地网页服务，并发送默认浏览器打开请求（命令退出0）。实际用户环境检查首页HTTP200、匿名会话HTTP401符合预期；提供商默认关闭。首次沙箱后台未保持，用户环境重试后服务正常，未启动第二个已有后端。沿用原账号/私有数据与程序自动非破坏性增量，不删除原件/密钥、不额外执行SQL或建号，无应用源码/配置改动。全量测试/构建和登录后业务本轮未验证（仅打开应用）；前次测试不冒充本次复验。交接与六份记录/详细日志已更新，公开同步仅此脱敏请求日志，不公开源码或媒体。
+
+### REQ-0107 · 2026-10-25 · 咨询：腾讯云 COS 是否有免费试用
+
+- 用户请求：询问腾讯云是否有免费试用的对象存储 COS。
+- 本轮性质：纯咨询 + 状态核查。**未修改任何代码、配置、SQL、云资源**，未创建/删除存储桶或对象，未提交 Git。
+- 联网核对（官方口径，以官网/控制台实时说明为准）：COS 首次开通向个人用户发放 **50GB 标准存储容量包，有效期 6 个月（180 天）**，企业用户 1TB，开通后自动发放、无需领取。免费额度**只免标准存储容量**，不免请求次数、外网下行流量、CDN 回源流量、跨地域复制/全球加速流量、低频与归档容量、多 AZ 标准存储容量及清单/检索/批量处理等管理功能。
+- 与本项目的关键关联：同地域**内网流量免费**，容器（ap-shanghai）与环境自带 COS 桶（ap-shanghai）之间上传下载不产生流量费；真正计费的是用户浏览器访问原件的**外网下行**。若前端仅展示抽帧缩略图（数十 KB 级），外网下行可控。
+- 状态核查（本轮实测）：
+  - 环境自带桶 `6661-fallsnow-d4gwz9mht57ea9014-1499380185`（ap-shanghai）可用、当前 0 对象（REQ-0106 已实测）。
+  - 本地服务：REQ-0101 启动的后台进程已结束（`66JCFg` 于 23:13:50 退出，运行 1h28m），但端口 1421 当前仍有另一实例在监听（PID 14636），实测 `GET /` → 200、`GET /api/healthz` → 200，服务可用。
+  - 本地库现状：账号 `xiaoduyihao` 仍 active；`assetCount=22`、`sessionCount=2`，较建号时的 0/0 已增长，说明用户已完成上传类操作。
+- 提醒：建议先设费用预警（建议 30–50 元）；免费额度 180 天后按量计费，需注意标准存储与请求/流量单价以官网定价页为准。
+- 状态及下一步：等待用户决定是否正式采用 COS 承载原件（对应 C3 路线，需改媒体层）。未获授权前不修改 `runtime.mjs`。
+
+### REQ-0110 · 2026-10-25 · 方案确定：原件 CFS 短暂存放 + 素材图片 COS（pgstore）存放，并验证可行性
+
+> 编号说明：本条原拟用 REQ-0108，但该号与 REQ-0109 均已被本文件内 Codex 的既有条目占用，故顺延为 REQ-0110；未改写他人条目。
+
+- 用户请求：确定方案为「原件用 CFS 短暂存放，素材库的图片用 COS 存放」，并要求验证方案可行性。
+- 本轮性质：可行性实测。**未修改任何应用源码、SQL 迁移、依赖或配置**；未部署；未提交 Git。仅在云端创建并随后删除了一次性测试 bucket 与临时 API key。
+- 关键事实修正（推翻 REQ-0106 的结论）：该环境 `RuntimeMode=postgresql`，`manageStorage(upload)` 实测返回 `STORAGE_NOT_SUPPORTED: Storage is not supported in PostgreSQL environment`。REQ-0106 中「环境自带 COS 桶可用、0 对象」的表述**不成立**，须撤回——`EnvInfo.Storages[]` 中的 `6661-fallsnow-...` 是 legacy NoSQL 桶，PG 环境不可用于上传。本项目「COS」实际落地为 **pgstore**（`storage` schema，Supabase Storage 同构）。
+- pgstore 现状实测：`storage` schema 存在 5 张表（buckets / objects / migrations / s3_multipart_uploads / s3_multipart_uploads_parts），`buckets=0`、`objects=0`。
+- 端到端验证（真实回执，全部通过）：
+  1. 建 bucket `sourcelens-verify`（`public:false`）→ `{"id":"sourcelens-verify"}`。
+  2. 上传 178 字节 PNG 至 `frames/probe.png` → `{"Id":"aa9d88ef-...","Key":"sourcelens-verify/frames/probe.png"}`。
+  3. HEAD 元数据 → `accept-ranges: bytes`、`content-length: 178`、`content-type: image/png`。
+  4. 下载并校验 → sha256 与源文件**完全一致**（`0bdddf34...bf8a0`）。
+  5. Range 请求 `bytes=0-31` → **HTTP 206**，收到 32 字节。
+  6. 签名下载 URL（`POST /v1/storages/object/sign/{bucket}/{name}`）→ 返回 `fullSignedURL`（235 字符，含 `?token=`）；**不加 Authorization 头**匿名 GET → **HTTP 200**，178 字节，sha256 一致；签名 URL 携带 Range → HTTP 206。
+  7. 私有性验证：无 token 直接 GET 对象 → **HTTP 404**（拒绝）。
+  8. 清理复核：删对象与 bucket 均 `{"message":"Successfully deleted"}`；`storage.buckets=0`、`storage.objects=0`；临时 API key（`keyId=IlKo6I3RQEqggfOqewkFLg`）已删除。
+- 仍旧阻塞：CFS —— `cfs:DescribeCfsFileSystems` 返回 `CAM signature/authentication error: request unauthorized`，与 REQ-0097/0105 一致，未解除。故「原件 CFS 短暂存放」这一半**无法在云上验证**。
+- 代码依赖核对（读取 `server/web/media.mjs`）：原件在 3 处被后续读取——`capture()` 手动补帧、`clips()` 音频切片、`makeFrame()` 重抽帧。若原件处理完立即删除，这三项能力失效，需先定义 TTL。
+- 未验证：pgstore 单对象大小上限、容器内访问 gateway 是公网还是内网链路、service_role 长期凭证的注入方式、`storage.objects` RLS 对 service_role 的实际行为（本次 service_role 上传成功，但未单独验证策略是否被 RLS 绕过）。
+- 状态及下一步：图片存 pgstore 的技术可行性**已证实**；原件 CFS 侧仍被 CAM 权限阻塞。等待用户裁决 3 件事：原件 TTL 时长、图片取用方式（服务端代理 vs 签名 URL 直连）、service_role 凭证配置方式。
+
+### REQ-0111 · 2026-10-25 · 咨询：TTL 含义，并解释「图片取用方式」与「service_role 凭证配置」两项
+
+- 用户请求：解释 TTL 是什么，并解释 REQ-0110 末尾提出的第 2、3 项待决策内容（截图）。
+- 本轮性质：纯咨询。**未修改任何代码、配置、SQL、云资源**，未部署、未提交 Git。
+- 术语澄清：本项目语境存在两个同名缩写——DNS 记录的 TTL（缓存存活时长）与数据 TTL（原件保留时长），本轮指的是后者。
+- 代码复核（本轮实测读取，非沿用旧结论）：
+  - `server/web/http.mjs:20` CSP 实际为 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`。据此可判定：签名 URL 直连 pgstore 网关域名会被浏览器拦截，必须放开 `img-src` 方可生效。
+  - `server/web/http.mjs:81-92`：`/api/media/` 与 `/api/library-media/` 路由已用 `stat` + `createReadStream` 实现，支持 `Range` 与 206，即服务端代理路径所需能力**已存在**，改造成本集中在「字节来源」而非「协议」。
+  - `server/web/http.mjs:15-17`：cookie 为 `__Host-sourcelens`，`HttpOnly; SameSite=Strict; Secure`，故代理路径天然沿用现有鉴权，签名 URL 直连则绕开该鉴权、改由短时 token 决定访问权。
+  - `server/web/media.mjs:138 / 162 / 167`：`makeFrame()`、`capture()`、`clips()` 三处依赖原件，TTL 到期删除将使三者失效。
+- 回答要点：TTL = 数据存活时长，需与 UI 承诺一致；服务端代理相对签名 URL 直连的差异集中在 CSP、鉴权、Range、缓存与带宽五项；`service_role` 为可绕过 RLS 的服务端角色，绝不可下发浏览器，临时 key、长期 key、服务端换票三种配置方式各有取舍。
+- 状态及下一步：三项决策（TTL 时长、取用方式、凭证配置）仍待用户确认；确认后才动 `runtime.mjs` / `media.mjs` / `http.mjs` 与新迁移。
+
+### REQ-0112 · 2026-10-25 · 咨询：TTL 能否修改；提出「不上传原件、本地播放截帧」的流程变更
+
+- 用户请求：询问 TTL 是否可改，并提出新流程——用户不上传视频，而是本地读取视频、经网页播放器预览并自行选择画面。
+- 本轮性质：方案评估与设计。**未修改任何代码、配置、SQL、云资源**，未部署、未提交 Git。
+- TTL 结论：TTL 尚未实现（`runtime.mjs` 无相关变量），因此「可改」不是问题；真正的问题是原方案下 TTL 需要与 `capture()` / `clips()` / `makeFrame()` 三处原件依赖对齐。新流程若成立，原件不落服务器，**原件 TTL 直接取消**。
+- 代码复核（本轮实测读取）：
+  - `media.mjs:29 upload()`：整段流写入 `ownerId/uuid.bin`，`ffprobe` 校验 180s / 200 MiB / 20 个资产 / 2 GiB 账号上限。
+  - `media.mjs:131 browserPreview()`：为可播放性将原件转码为 960px WebM（`libvpx`，timeout 120s），这是原件必须留在服务器的直接原因之一。
+  - `media.mjs:110 sceneTimes()`：ffmpeg `select='eq(n,0)+gt(scene,0.32)'` 场景检测，最多 20 点，不足 6 点时按 0/20/40/60/80/95% 兜底。
+  - `media.mjs:138 makeFrame()`：以毫秒时间戳对原件 `-ss` 抽单帧 PNG，并计算 64 位感知哈希（9×8 灰度比较）。
+  - `media.mjs:167 clips()`：对原件取 10%/50%/85% 三个时间点各 12 秒 16 kHz 单声道 WAV。
+  - `src/App.tsx:169` / `src/components/VisualWorkspace.tsx:35`：前端已有 `<video>` + 时间轴，但「确认并保存 PNG」只把时间戳发给服务端（`captureFrame(ms)`），由服务端从原件抽帧。
+- 可行性判断：技术上可行。`browserPreview` 与 `sceneTimes` 可被浏览器侧替代（`URL.createObjectURL` 播放、canvas `drawImage` 截帧、抽样直方图差异做场景检测），`makeFrame` 可改为「接收客户端上传的 PNG 并计算感知哈希」，`clips` 需改为客户端生成 12 秒 WAV 后上传识别。
+- 已识别风险（未验证项）：浏览器编解码覆盖（HEVC/MKV/AVI 多数浏览器不支持，服务端 FFmpeg 支持）、`currentTime` 跳转后 `drawImage` 可能取到旧帧（须用 `requestVideoFrameCallback` 或 `seeked` 同步）、20 张 PNG 由本地变网络传输带来的带宽成本、既有前后端测试将大面积失效、与 `AGENTS.md` 记录的「180 秒 / 200 MiB 后端硬限制」条款冲突需用户授权调整。
+- 收益判断：若原件不落服务器，`runtime.mjs:16-17` 的 CFS 强制校验失去前提，**当前阻塞云部署的 CFS P0 随之消失**，仅剩 PostgreSQL TLS 一项。
+- 状态及下一步：等待用户确认是否切换该架构，以及是否接受「浏览器编码兼容性下降」这一代价；确认后再给出分阶段改造清单。
+
+### REQ-0113 · 2026-10-25 · 咨询：桌面软件形态能否免去 CFS；GitHub 部署是否必须备案
+
+- 用户请求：询问若应用改为下载到用户终端的软件，是否可在每次打开时保存上一次记录的视频、不用 CFS 而节省服务器资源；并询问这是否意味着域名无法通过 GitHub 直接部署、必须报备。
+- 本轮性质：纯咨询 + 代码核查。**未修改任何代码、配置、SQL、云资源**，未构建、未部署、未提交 Git。
+- 代码核查结论（本轮实测读取，非沿用旧结论）：
+  - 桌面端**已完整存在且已实现本地媒体处理**，并非需要新建：`src-tauri/src/lib.rs`（52,003 B，含 `inspect_video`/`analyze_video`/`capture_frame`/`analyze_audio`/`search_frames`/`identify_music`）、`src-tauri/src/history.rs`（26,725 B，`rusqlite` bundled，建 `query_history` 表）。
+  - 数据落盘路径：`lib.rs:1402` `app.path().app_data_dir()`；`lib.rs:1423` `sourcelens.sqlite3`；任务目录 `lib.rs:598/651/915/1223` `data_dir/jobs/<uuid>/` 存抽帧 PNG 与音频片段。
+  - 原视频**只存路径引用，不复制副本**：`VideoInfo.path` 为原文件路径字符串（`lib.rs:63`、`lib.rs:599`），另以 `file_hash()`（`lib.rs:358`）记录 SHA-256 用于去重校验。
+  - 因此 CFS 约束只存在于 Web 后端：`server/web/runtime.mjs:16-17` 的强制断言属 `server/web` 进程，桌面端不加载该模块，**桌面形态下该 P0 不存在**。
+- 本轮新发现的两处桌面端配置不一致（**读文件得出，未实测构建，故标注未验证**）：
+  1. `src-tauri/tauri.conf.json` `build.devUrl = http://localhost:1420`，但 `build.beforeDevCommand = "npm run dev"` → `scripts/dev-web.mjs` 固定以 `--mode web` 启动 Vite，`vite.config.ts:18` 该模式下端口为 **1421**。预期 `tauri dev` 会等待 1420 而失败。
+  2. 同文件 `build.frontendDist = "../dist"`，但 `npm run build` 为 `vite build --mode web`，`vite.config.ts:5` 该模式 `outDir = dist/web`。预期 `tauri build` 打包到非最新产物。
+  3. `src-tauri/binaries/` 仅有 `.gitkeep`，无 ffmpeg/ffprobe sidecar；`lib.rs:275` `run_tool` 通过 `command_path(app, tool)` 解析，本机可用 ffmpeg（n8.0.1）不代表分发到用户机器可用。
+  - `src-tauri/target/release` 下无 `.exe`、无 `bundle/` 目录，即**从未产出过安装包**。
+- 域名与部署核查结论：
+  - GitHub Pages 只能托管静态文件，无法运行 `server/web`（Node + FFmpeg + PGlite/PG），故"通过 GitHub 直接部署"只能部署 `npm run build:demo` 的模拟演示页——与 `docs/PUBLIC_DEMO_DEPLOYMENT.md` 现状一致。
+  - 桌面软件分发走 GitHub Releases 下载安装包，**不涉及域名，也不涉及 ICP 备案**。
+  - ICP 备案的判定依据是**服务器所在地**（境内服务器提供 HTTP 服务才需要），不是域名注册地。GitHub Releases / Pages 均为境外托管，不需要备案；本项目的腾讯云上海节点属境内，必须备案，且另受套餐（个人版及以上）、环境有效期 > 6 个月、云托管固定 IP 三项门槛限制（REQ-0102 已实测）。
+- 状态及下一步：等待用户裁决产品形态（桌面端 / Web 端 / 双形态）。若选桌面端，下一步应优先修上述三处配置并实测 `npm run tauri build`；未获授权前不修改 `tauri.conf.json` 与 `binaries/`。
+
+### REQ-0114 · 2026-10-25 · 决策落地：桌面端 + 引用式；WorkBuddy 承接部署
+
+- 用户请求：确认产品形态为**桌面端**、记录方式为**引用式**；桌面端构建验证交给 GPT；WorkBuddy 负责后续应用部署，保证用户终端可用，且每次检索结果上传至数据库、所有用户可见。
+- 本轮性质：形态决策落地 + 部署前置核查 + 交付部署运行手册。**未部署任何服务器、未改数据库、未改业务代码**，未提交 Git。
+- 代码核查（本轮实测读取，非沿用旧结论）：
+  - 桌面端链路**已完整**：`src-tauri/src/history.rs` 实现 `history_connect`（校验 43 位 base64url 凭据）、`PUT /v1/consent`、`POST /v1/query-events`、本地 outbox 与 `held` 状态；`src/components/QueryHistory.tsx` 已有「共享查询历史」页（服务器地址 + 凭据 + 同意勾选）；`src-tauri/src/lib.rs:1451-1455` 已注册全部命令。即"上传至数据库 + 所有人可见"的客户端侧无需新建。
+  - 引用式与既有实现一致：`lib.rs:63` `VideoInfo.path` 只存路径字符串，`lib.rs:358` `file_hash()` 存 SHA-256 去重，未复制原文件。
+  - 服务端就绪度：`server/src/main.mjs` 监听 `127.0.0.1:8787`（须反代）；启动自检拒超级用户/表所有者/BYPASSRLS，且要求当前角色属于 `sourcelens_history_api`；`server/src/http.mjs:19` 只接受 `Bearer <43 位>`；`http.mjs:11-16` 以 `socket.remoteAddress` 做 240 次/分钟限流。
+- 实际修复（唯一代码改动）：
+  - `scripts/package-history-server.ps1` —— 原脚本调用 `[System.IO.Path]::GetRelativePath`，本机为 Windows PowerShell 5.1（无此法，且未装 pwsh 7），实测报错 `方法调用失败，因为 [System.IO.Path] 不包含名为"GetRelativePath"的方法 @ line 12`，两个暂存目录为空、无 zip 产出。改为按 `$prefix` 前缀截取相对路径，并新增"越界路径即拒绝"校验。修复后实测产出 `sourcelens-history-server.zip`：15 个条目、24,067 B、SHA-256 `b4eb502e9f925c95d989b18fb9b650aa704581f9fd1dc844e5b59f939b2cb251`，包内无 `.env`／`node_modules`／媒体／私钥。
+- 验证：`npm --prefix server test` → **19/19 通过**（22.8 s，含 history 与 web 两套用例，PGlite + 合成身份 + mock 提供商）。构建/桌面打包未执行（本轮无相关改动，且桌面构建归属另一执行方）。
+- 阻塞（未解决，属外部资源）：历史 API **无处部署**。CloudBase 该环境为 PostgreSQL 共享实例且不能创建角色（ISS-003），无法满足启动自检；用户侧暂无可用服务器凭证与域名；桌面客户端要求 HTTPS（`history.rs` `endpoint()` 仅放行 `localhost` 的 http），故裸 IP + 端口不可行。**未做任何规避性变通**。
+- 新增交付：`docs/DEPLOY_RUNBOOK_2026-10-25.md`（拓扑、外部前置、Ubuntu 步骤 1–9、验收 V1–V7、备份回滚、六条已知限制）。
+- 新增问题：ISS-038（已修复）、ISS-039（P0 外部阻塞）、ISS-040（反代后限流共用）、ISS-041（发号制与"所有人可见"的落差）、ISS-042（无备份）。
+- 状态及下一步：等用户提供①服务器②域名③大陆备案或境外免备案路线；三项到位后按运行手册远程执行并逐步贴真实输出。未获服务器前不声称"已部署"。
+
+### REQ-0115 · 2026-10-25 · 复核：40 人峰值下 CloudBase 能否承载历史服务
+
+- 用户请求：明确峰值不超过 40 人，要求确认当前版本能否用 CloudBase 实现；并说明域名正在申请中。
+- 本轮性质：只读可行性复核。**未改任何代码、未建表、未建角色、未部署、未提交 Git**；全部结论来自 5 次只读查询。
+- 实测（本轮真实返回，非沿用旧结论）：
+  - 环境：`fallsnow-d4gwz9mht57ea9014`，`ap-shanghai`，`baas_trial`（体验版），到期 `2027-04-01 23:59:59`，`RuntimeMode=postgresql`，网关 QPS 配额 **500**。
+  - PostgreSQL：版本 **17.11**，`TenantType=SHARED`；当前角色 `cloudbase_postgres_postgres_j5ui9utg`，`rolsuper=false` / `rolcreaterole=false` / `rolcreatedb=false` / **`rolbypassrls=true`**，且它就是 database owner；`inet_server_addr()=29.29.235.137`、`port=50537`（平台私网，无对外连接串）。
+  - 角色清单（15 个）：只有平台角色，`anon` / `authenticated` / `service_role` 均在；`rolname like 'sourcelens%'` **计数为 0**，即历史服务的角色体系从未建立。
+  - 平台限制：`queryPgDatabase` 提示可传角色仅 `cloudbase_postgres` / `anon` / `authenticated` / `service_role`；`cloudbase_dashboard_user_*`（唯一带 `rolcreaterole=true` 的角色）被判定为不可用于用户调用。
+  - 云托管：`envStatus → Status=normal, PackageType=Trial`，即**已开通**，`manageCloudRun(deploy)` 可直接用。
+  - 网关：默认 HTTPS 域 `fallsnow-…-1499380185.ap-shanghai.app.tcloudbase.com`，已有 3 条 `WEB_SCF` 路由（`/api/assets`、`/api/favorites`、`/api/health`），`accessUrlReachable=true`。
+- 判定（三层）：
+  1. **容量层：够，余量两个数量级。** 40 人同时活跃按每人 3 请求/分钟 ≈ 120 请求/分钟 ≈ 2 QPS，对 500 QPS 配额无压力；存储按每次查询 2 个约 2 KB 事件估算，1 万次查询约 40 MB，可忽略。
+  2. **代码层：当前版本不能直接上。** 三条硬阻断，互相独立：① `SHARED` 无 TCP 连接串，而 `server/src/main.mjs:6` 用 `pg.Pool` 直连；② `rolcreaterole=false`，`migrations/001_history.sql:4` 的 `create role sourcelens_history_api` 会直接失败；③ 唯一可用的连接角色 `cloudbase_postgres…` 是 `rolbypassrls=true` 且为 db owner，`main.mjs:9-10` 的安全自检会拒绝启动。
+  3. **架构层：CloudBase 可行，但要重写数据访问层。** 该环境的既有范式是「HTTP 云函数 + PG 网关」——`api-assets`/`api-favorites` 就是这样跑的。历史服务同理：容器/函数不直连 PG，改调网关；`store.mjs` 的 5 个方法各下沉为一个 plpgsql 函数（事务原子性由函数内保证），Node 侧只负责 HTTP、43 位凭据校验与 RPC 转发。
+- 域名结论：云托管与网关**自带 HTTPS 默认域**，域名申请下来之前就能跑通端到端；但自定义域名绑定受套餐限制（REQ-0102 结论：备案需个人版及以上，体验版不满足），本轮未复验绑定动作。
+- 未验证（本轮明确未做）：网关是否暴露 PostgREST 的 `/rpc/` 通道；`service_role` 长期凭证的注入方式。两项都需先写一个一次性探针对象才能确认，属改动数据库，未获授权不做。
+- 状态及下一步：等用户在两条路线中裁决——A「CloudBase 原生改造」（改数据层，估 0.5–1 个工作日，零服务器成本）；B「境外轻量服务器跑现状代码」（不改代码，运行手册已就绪）。若选 A，先批准一次一次性探针（建临时 schema + 1 个 RPC 函数，验完即删）以消除上面两项未验证。
+
+### REQ-0116 · 2026-10-25 · 选 A：CloudBase 原生改造，数据层已落地
+
+- 用户请求：选择 **A**；要求列出 Codex 需要调整的实现；并询问 COS 创建页各项如何选配。
+- 本轮性质：**已执行远端数据库变更**（一次迁移），新增交付文档一份。**未改任何应用代码、未部署云函数、未建网关路由、未提交 Git**。
+- 关键取证（本轮实测，推翻上一轮的两条"未验证"）：
+  - **网关访问方式已有现成范式**：从云端拉取 `api-assets` 代码包（16,513 B，SHA-256 `268cab5e…3abfd4f5`）并解包，其 `db.js:22` 写明数据库走 `https://<envId>.api.tcloudbasegateway.com/v1/rdb/rest`，认证为 `Authorization: Bearer <CLOUDBASE_API_KEY>`；`getFunctionDetail` 显示该函数**只有 1 个环境变量** `CLOUDBASE_API_KEY`（916 字符，ValueLength），`VpcConfig` 为空 —— 即**不需要 TCP、不需要 VPC**。上一轮"service_role 长期凭证怎么注入"的问题至此有了答案：环境变量，且已有实例在跑。
+  - **schema 权限**：当前角色对 `public` 持有 `C`（CREATE）权限（`pg_namespace.nspacl` 实测），即"不能建角色"不等于"不能建表建函数"。ISS-044/045 由此从"阻断"降级为"实现方式受限"。
+  - **现有对象盘点**：`public` 已有 `assets` / `favorites` / `scene_objects` 三张 WordWorld 业务表；`auth` schema 有 CloudBase Auth 全套（`users` 等 19 张）；`storage` schema 有 pgstore 全套（`buckets` / `objects` / `s3_multipart_uploads`）。历史表与它们不冲突。
+  - **网关路由是前缀匹配**（`manageGateway.path` 文档原文），故一条 `/v1` 路由即可覆盖桌面端全部接口，**桌面端零改动**。
+  - **RPC 通道**：匿名 `POST /v1/rdb/rest/rpc/sourcelens_status` 返回 **401 而非 404**；但 401 对不存在路径同样返回，故只算"未被路由层拒绝"，**带凭证的成功调用仍未实测**（见 ISS-048）。
+- 实际落地（远端变更，可回滚）：
+  - 迁移 `20261025040000_sourcelens_history` 经 `applyMigration` 应用，任务 `task-369b7d696f4e4d06` → `Status=Succeed`、`verified=true`。
+  - 建 6 表（`sourcelens_devices` / `_consents` / `_queries` / `_events` / `_shared_queries` / `_withdrawals`）、3 索引、8 函数，全部在 `public`；`revoke ... from public` 后仅 `grant execute ... to service_role`。
+  - 与 `001_history.sql` 的四处必要偏离：不建角色（`rolcreaterole=false`）、不开 RLS（`service_role` 带 `BYPASSRLS`，RLS 无效）、改落 `public`（PostgREST 默认只暴露 public）、`payload_hash` 由 Node 传入（jsonb 重排会让重算哈希永久失配）。
+- 验证（本轮真实执行）：
+  - 未知 token 调 `_status` / `_list` / `_ingest` → 三者均返回 `{"error":"unauthorized"}`。
+  - 全链路 `DO` 块（结束抛异常回滚）：`consent` → `{consentVersion:"history-public-v1"}`；`ingest0/1` → `duplicate:false`；同 hash 重放 → `duplicate:true` 且 `serverAt` 不变；同 eventId 换 hash → `idempotency_conflict`；`list public` → 1 条完整 event；`withdraw` → `true`；撤回后 `list` → `[]`。回滚后计数 `devices=0, events=0, shared=0, consents=0`，**无测试残留**。
+- 新增交付：`docs/CLOUDBASE_NATIVE_HANDOFF_2026-10-25.md` —— 含架构图、`server/src` 五个文件的逐项改动表（`main.mjs` / `store.mjs` / `http.mjs` / `validation.mjs` 不动 / `provision-device.mjs`）、新增 `cloudfunctions/api-history/` 的目录与路径契约、云函数与路由配置值、错误码映射表、安全降级说明、COS 选配表。
+- 新增问题：ISS-047（RLS 失效，隔离全靠函数，P1 架构风险）、ISS-048（API Key 必须人工粘贴，P2 运维）、ISS-049（RPC 带凭证调用待实测，P0 待验证）。关闭/降级：ISS-039（部署阻塞解除，路线改为 A）、ISS-043/044/045（由"阻断"降级为"已规避"，规避方式见迁移文件头注释）、ISS-046（凭证注入方式已确认，仅剩 rpc 待实测，转入 ISS-049）。
+- 状态及下一步：等 Codex 执行 §4.0 的 RPC 实测（阻塞项）与 §4.1–4.10 的代码改造；用户需拍板两件事——①素材图用 pgstore 还是另建 COS；②是否要「匿名只读公共库」（当前未发号者连公共库都读不到）。
+
+---
+
+## REQ-0117 · 2026-10-25 12:43 +08:00 · WorkBuddy
+
+- 用户输入：两张控制台截图（①「关键信息确认」弹窗；②桶概览页）。用户已自行创建对象存储桶，未再等我方拍板，等同对 ISS-051 作出选择：**建 COS**。
+- 截图可确认事实（4 项）：桶名 `sourcelens-media-1499380185`（`sourcelens-media` + APPID，符合建议）、地域 `ap-shanghai`（与 CloudBase 环境同域）、访问权限 `私有读写`（符合建议）、创建时间 `2026-10-25 12:12:36`、当前用量 0 B / 0 对象。
+- 本轮实测（3 项，真实执行）：
+  - `GET /` → **403 AccessDenied**（私有生效；若公有读会返回 200 列表）。
+  - `GET /nonexistent-probe.png` → **403**（私有桶不泄露 key 是否存在，属预期行为，不是故障）。
+  - `OPTIONS` 带 `Origin` 预检（两种 Origin）→ **403 XML，无 `Access-Control-Allow-*` 头**，判定 **CORS 未配置**。
+- 代码侧新发现：`src-tauri/tauri.conf.json:25` 的 CSP 是 `img-src 'self' asset: https://asset.localhost data:`，**不含 COS 域名**。桌面端若用 `<img src="https://…cos.ap-shanghai.myqcloud.com/…">` 直接引图，会被 WebView 拦下。→ 记 ISS-052。
+- 官方文档核实（非我方推测）：2024-01-01 后创建的桶，用默认域名访问会在响应头强制加 `x-cos-force-download:true` 与 `Content-Disposition: attachment`，浏览器不能直接预览；要正常预览必须配**自定义源站域名**（大陆地域需网站备案）。来源：腾讯云 COS 文档 436-102489 / 436-102509。
+- 新增/更新问题：ISS-052（桌面端 CSP 未放行 COS，P1）、ISS-053（云函数访问 COS 缺凭证链，P0 待打通）、ISS-051 关闭（用户已建桶）。
+- 未改任何代码、未改数据库、未上传任何对象（用量仍 0 B）。未提交 Git。
+
+---
+
+## REQ-0118 · 2026-10-25 13:02 +08:00 · WorkBuddy
+
+- 用户提问：「为何调整了 RSL」（RLS，行级安全）。这是一个质疑型提问，要求给出依据而不是结论。
+- 澄清：**不是「调整」，是这版迁移没有启用 RLS**，属于设计取舍，原因有三条实测事实（见下）。
+- 实测 1（角色属性）：`service_role` → `rolbypassrls=true`；`anon` / `authenticated` → `false`。`FORCE ROW LEVEL SECURITY` 只压表 owner，**压不住 `BYPASSRLS` 角色**，所以即便 `enable` + `force` 也全表直通。
+- 实测 2（表状态）：6 张 `sourcelens_*` 表 `relrowsecurity=false`、`relforcerowsecurity=false`、`pg_policy` 计数 0，与迁移设计一致。
+- 实测 3（身份链）：`role_table_grants` 显示实际业务身份是 `service_role`；路径「桌面端 → 云函数 → 网关 → PG」中**不存在 per-request 的数据库身份**，`SET LOCAL ROLE` 与 `current_setting('sourcelens.device_id')` 无处安放，而原 `001_history.sql` 的 RLS 策略完全依赖这两者。
+- 补充实测（跨用户隔离）：`DO` 块内建 A/B 两设备，A 上报一条查询后以 B 身份操作，结果 X1–X5 全部符合预期（B 看得到 A 的 public、看不到 A 的 mine、撤不回 A 的记录），异常回滚后计数 0/0/0/0/0。**证明函数级隔离成立**，但只能证明「8 个函数写得对」，不是数据库层兜底。
+- **发现我方上轮表述过宽**：迁移只 `revoke` 了 7 个函数的 `execute`，**表级权限没回收**。平台默认授权仍在：`anon` 对 6 张表有 `SELECT`（含 `token_hash`），`authenticated` 有含 `TRUNCATE` 的全权限，且 RLS 关闭 → 无任何行级过滤。当前不可直接利用（不向客户端签发这两类凭据），记 **ISS-054**，SQL 已备、**未执行，等用户批准**。
+- 记录更新：`issues.md`（ISS-047 补实测证据、新增 ISS-054）、`test-results.md`（REQ-0118 X1–X5 + 授权矩阵）、`docs/CLOUDBASE_NATIVE_HANDOFF_2026-10-25.md` §六 改为「三条前提全不成立」对照表、§七 待办增第 13/14 项。
+- 未改代码、未改数据（测试全回滚）、未提交 Git。
+
+### REQ-0118 · 2026-10-25 · 桌面端与 COS 素材库接入复核（部分完成，云集成待裁决）
+
+- 用户要求读取最新WorkBuddy交接，落实桌面端分工，使用已创建的上海私有COS桶实现所有持凭据用户投稿、检索和调取候选图片。桶名/资源域名仅在私有配置说明记录，不复制至本公开日志。本轮不上传原视频或改变历史日志脱敏规则。
+- 起点main/fea548e dirty，192文件基线；已读Codex0109、WorkBuddy0114–0117、迁移/交接和实际代码。发现WorkBuddy0116关闭RLS与当前AGENTS保留RLS要求冲突，已询问用户安全边界裁决，暂停受影响的云数据层接入/部署，不删除自检或改已有远端表。先做不依赖该决策的桌面启动/构建入口修复及验证；不会把单有桶域名当成具备凭证或检索索引。
+
+- 本地部分完成：默认dev/build切回desktop模式，web改为显式dev:web/build:web且CloudBase打包仍使用web产物；Tauri回环端口与dist/desktop目录对齐，CSP仅新增指定私有COS图片域与blob，未开放浏览器直传。新增配置测试；不修改原视频引用式处理/SQL/历史角色自检，不改真实用户服务。初次配置测试Node类型/断言及沙箱缓存失败，修正JSON导入后前端42/42通过；build初次失败，修正后1604模块/8.03秒成功。Rust初次模拟HTTP被沙箱拦截19/20，本机复验20/20。后端最终结果见私有交接。失败原始证据保留，无真实提供商调用。
+- 未完成：桌面投稿/区域XFeat工作区尚待移植；COS鉴权上传、素材索引检索、受控取图与全用户验收尚未接通；无真实COS上传/云RPC验证/部署、Windows安装包或全新安装验收。用户尚未同意无RLS方案，受影响工作暂停等待裁决。本轮不是“功能全部实现”。
+
+- 补充验证：本机后端复验19/19通过（初次沙箱8/19失败证据保留）；只证明原有RLS/本地素材链路，不代表CloudBase无RLS或真实COS验收。README和网页README补充默认桌面入口及历史网页显式命令，避免沿用旧npm run dev启动网页的指引。
+
+### REQ-0119 · 2026-10-25 · 解释关闭数据库RLS的影响（咨询完成，架构选择待定）
+
+- 用户对安全边界提问回答“告诉我关闭了数据库RLS的影响”，不视为批准取消RLS。核对两套实际迁移和PostgreSQL官方说明，未改任何业务代码/数据库/云配置。
+- 结论：RLS是逐行读写隔离，关闭不等于自动公开或绕过登录，但隔离依赖服务端函数正确过滤。当前CloudBase运行角色有BYPASSRLS且被授予六表读写/发号函数权限，开RLS开关也不能约束该角色；若服务Key泄露或代码漏检，影响可能跨用户。GRANT/REVOKE/数据库权限仍有效，但本轮未独立审计生产默认表授权，不能把函数撤权等同已证明原表匿名不可读。
+- 项目建议：公共素材共享读、本人投稿写/撤回、私有历史隔离并不要求关闭RLS；优先验证非绕过运行身份/受限访问路径。COS私有桶ACL与SQL RLS是独立权限层。若明确选择函数级隔离，需最小权限、服务Key只在后端、跨设备越权/撤回/签名过期等专项测试及独立图片共享协议后才联调；尚未获此裁决。说明和交接已记录，不执行云端变更。
+
+### REQ-0120 · 2026-10-25 · Codex桌面/COS请求编号对账（部分完成）
+
+- 编号纠正：并行执行期间WorkBuddy也使用了REQ-0118，双方原文均保留。上方Codex“桌面端与COS接入复核”临时0118统一映射为正式REQ-0120；临时0119咨询映射为正式REQ-0121，原始证据目录/日志文件名保留以免断链。并非新增实现请求，不覆盖WorkBuddy0118记录。Codex规则冲突问题原临时ISS-054映射为ISS-056，保留WorkBuddy的ISS-054用于其发现的表级默认授权暴露。
+- 最终结果不变：桌面入口及CSP修正、42前端/20Rust/19后端与desktop前端构建通过，无COS素材链路实现/部署/安装包验收。新增变更仅本轮配置/测试/文档；保留并行文档与记录，不动其SQL或远端数据。
+
+### REQ-0121 · 2026-10-25 · Codex关闭RLS影响咨询（完成，待用户决定）
+
+- 对应上方Codex临时0119，非重复请求。执行中读到WorkBuddy13:03后的并行更新：其记录显示6表anon具SELECT、authenticated具包括TRUNCATE的广泛权限，未收回；我方未独立复验生产权限或外网可利用性，也不沿用“当前不可直接利用”的保证。应先核验/收紧表级授权，再评估函数级隔离，不能只以函数跨用户测试通过作为整体安全验收。
+- RLS开关不会改变COS私有ACL，也不会把本机原视频上传云；风险主要是云端历史/设备/素材目录等被跨用户读取或修改，实际范围取决于授权和可达性。用户尚未批准弱化安全边界，云改造继续暂停。
