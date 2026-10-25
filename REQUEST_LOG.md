@@ -1365,3 +1365,84 @@
 
 - 对应上方Codex临时0119，非重复请求。执行中读到WorkBuddy13:03后的并行更新：其记录显示6表anon具SELECT、authenticated具包括TRUNCATE的广泛权限，未收回；我方未独立复验生产权限或外网可利用性，也不沿用“当前不可直接利用”的保证。应先核验/收紧表级授权，再评估函数级隔离，不能只以函数跨用户测试通过作为整体安全验收。
 - RLS开关不会改变COS私有ACL，也不会把本机原视频上传云；风险主要是云端历史/设备/素材目录等被跨用户读取或修改，实际范围取决于授权和可达性。用户尚未批准弱化安全边界，云改造继续暂停。
+
+<!-- REQ-0125 日志对账：保留远端已上传前缀，下方接回本地独立执行记录；编号映射沿用原对账。 -->
+
+---
+
+## REQ-0119 · 2026-10-25 13:07 +08:00 · WorkBuddy
+
+- 用户要求：**补充对 RLS 的描述，让 Codex 知道为何不用 RLS**。即要求把口头解释固化成一份可直接交给实现方的决策文档。
+- 本轮先做 4 条实测（E1–E4），避免把结论建立在推断上：
+  - E1 角色属性：`service_role.rolbypassrls=true`；`anon`/`authenticated` 均 `false`。
+  - E2 表状态：6 表 `relrowsecurity=false`、`relforcerowsecurity=false`、`pg_policy=0`。
+  - E3 降权可行性：`set local role anon` 成功，`SELECT` 通过、`INSERT` 被拒（`permission denied`）⇒ **降权真实有效**。
+  - E4 网关侧未验证：`pg_auth_members` 显示 `cloudbase_postgres_*` 是 `anon` 成员，而 **`service_role` 不是**；网关的 `session_user` 是 `cloudbase_authenticator`，能否再 `SET ROLE anon` 未测，与 ISS-049 同一把钥匙。
+- **口径修正（重要）**：上一轮「四个前提一个都不成立」**说过头**。准确为「两个不成立 + 一个未验证 + 一个成立」，结论从「做不到」改为「**能做，但当前阶段代价不值得**」（虚假安全感 / 复杂度翻倍 / 故障模式更难诊断）。
+- 新增交付：**`docs/RLS_DECISION_2026-10-25.md`**（9 节）：TL;DR、原设计如何用 RLS（带 `001_history.sql` 行号）、迁移的 8 项逐条对照、4 条实测证据含复现 SQL、不用 RLS 的三条理由、替代防线 D1/D2/D3（**D2 尚未做 = ISS-054**）、**Codex 的 5 条红线**、X1–X5 用例模板、将来加回 RLS 的触发条件与实施骨架、复现命令。
+- 文档联动：`docs/CLOUDBASE_NATIVE_HANDOFF_2026-10-25.md` §四 开头加「动工前必读」与一句话版本；§六 第 1 条改为「两个不成立 / 一个未验证」对照表并指向新文档；§七 增第 15 项（Codex 动工前必读）；§八 文件清单加入新文档。
+- 未执行：未 `enable`/`force` RLS、未建策略、未回收表级授权（ISS-054 待批准）。未改代码、未提交 Git。
+
+
+
+
+### REQ-0122 · 2026-10-25 13:45 · WorkBuddy · RLS 可开启性评估（实测，未执行任何变更）
+
+- 用户问：能否开启 RLS，以保证 Codex 的验收通过。
+- 实测 7 条（E5–E11，全部整块回滚；事后 `devices=0 / events=0 / probe_tables=0 / probe_funcs=0`）：
+  - E5：`cloudbase_authenticator` 同时是 `anon`/`authenticated`/`service_role` 成员 ⇒ 上一轮 E4「未验证」解除。
+  - E6：`set local role cloudbase_authenticator` → `set local role authenticated` 均成功。
+  - E7：RLS + `force` + `policy to authenticated` 真实过滤：注入身份=1 行；身份清空=0 行（故障模式确认）。
+  - E8：**plpgsql 函数内 `set local role authenticated` 可行且 RLS 生效**（`{"cu":"authenticated","rows":1}`）。
+  - E9：`service_role` 仍绕过（2 行全可见）⇒ 必须降权，只 `enable` 无效。
+  - E10：平台 `ALTER DEFAULT PRIVILEGES`（public schema，两个 owner 角色）对**函数**自动授 `EXECUTE` 给 `anon`/`authenticated`/`service_role`。
+  - E11：`authenticated` 调 `sourcelens_provision_device` **成功发号**（`{"created":true,"deviceId":"ce2a3252-…"}`）；`anon` 被拒（`42501`，表无 INSERT）。
+- 结论：**能开，且建议开**；但必须与「8 函数加降权+注入」「权限重排」**同批**执行，否则 RLS 一生效全站查询返回 0 行。
+- 口径修正（ISS-058）：REQ-0116 所述"7 个函数均已 revoke all from public、只 grant 给 service_role"**只对 `PUBLIC` 成立**，对 `anon`/`authenticated` 不成立，已显式撤回。
+- 新问题：**ISS-057（P0，函数级 EXECUTE 泄漏，实测可利用）**、ISS-058（口径错误，已撤回）。
+- 新增文档：`docs/RLS_ENABLE_ASSESSMENT_2026-10-25.md`（10 节：结论 / 两处修正 / E5–E11 / 身份签发现状 / A·B·C 方案对比 / v2 实施清单 / 新 P0 / 新契约 / 待批准 3 项 / 复现命令）。`docs/RLS_DECISION_2026-10-25.md` 顶部已标注结论被更新。
+- 未执行：未 `enable` RLS、未建策略、未回收任何表/函数权限、未改代码、未提交 Git。
+- 状态及下一步：等用户批准三件事——①回收 6 表 + 7 函数的 `anon`/`authenticated` 授权；②`alter default privileges` 根治；③v2 迁移（RLS + 函数降权注入，须与 Codex 代码同批上线）。
+
+### REQ-0123 · 2026-10-25 · 生成桌面项目MVP验收方案（文档完成，产品未验收）
+
+- 用户要求为项目生成验收MVP。本轮按桌面产品最小可验收范围、用例与执行记录模板交付，不解释为立即部署、上传真实素材或运行付费接口。已读取Codex0120/0121与WorkBuddy0122最新交接及实际入口/测试证据；保留main/fea548e dirty状态。
+- 纳入本地引用视频→截帧/框选→明确确认→COS投稿/索引→跨设备图库检索/取图→脱敏历史闭环，区分强制项与后续项；把最新RLS恢复/原表及函数默认授权整改列为上线门槛，不能以过时“RLS做不到”作为豁免。未修改业务代码或云资源；文档验证和最终交付另补。
+
+- 交付完成：新增私有MVP验收方案及待填执行记录，32项连续唯一用例（31强制/1联网扩展）、两设备两机流程、测试集与真值定义、建议准确率/1万图库/40并发目标、权限/RLS/隐私/安装/恢复否决条件及分阶段分工。所有用例执行状态均为未执行，不把文档或历史单元测试当产品已通过；数值为待冻结建议，不是当前能力/成绩。
+- 本轮验证：文档脚本退出0，13份文本UTF-8、8个相对链接、32项主表/执行表对应通过；202基线文件中194未变，变化仅8份既有交付/日志，新增文档/详细记录，源码/配置/SQL零变化。git diff --check退出0，仅旧换行提示。应用测试/构建/真实云/提供商/安装/压测均未执行（文档任务），产品仍有COS/桌面桥接和权限整改阻塞。只同步本脱敏日志，不公开方案/源码/私有证据。
+
+- 公开同步未完成：DryRun退出1，保护脚本检测到远端独立请求日志修改而拒绝上传。本地条目和双方历史保留，未覆盖/强推、未发布验收方案或源码；远端不包含本轮最新记录，需后续对账合并历史再同步。原始sync-dry.txt保留，不把预检失败写成发布成功。
+
+
+### REQ-0124 · 2026-10-25 14:40 · WorkBuddy · 完成：回收 anon/authenticated 授权（上轮第 1、2 步已执行）
+
+- 用户批准执行第 1、2 步；同时新增需求「**管理员账户可以删改其他用户的历史记录**」，本轮只登记为设计契约，**未实现**。
+- 已执行 5 组 DCL（均幂等，可重复跑）：
+  1. `revoke all on table` 6 张 `sourcelens_*` from `anon, authenticated`
+  2. `revoke all on function` 7 个函数 from `anon, authenticated`
+  3. `revoke all on sequence` 2 个 `_id_seq` from `anon, authenticated`（**第 1 步原计划漏掉，本轮补**）
+  4. `alter default privileges in schema public`：撤销 anon/authenticated 在 tables / sequences / functions 上的默认授权
+  5. `alter default privileges in schema public revoke execute on functions from public`（**实测必需，见 ISS-059**）
+- 功能对照（`DO` 块，异常回滚）：
+  - `authenticated` 调 `sourcelens_provision_device`：`{"created":true,"deviceId":"ce2a3252-…"}` → **`42501` permission denied**
+  - `anon` 读 `sourcelens_devices`：可读（含 `token_hash`）→ **`42501`**
+  - `service_role` 调 `sourcelens_status`：`{"error":"unauthorized"}` → 不变（未误伤）
+- 建对象对照：收紧后新建**表**的 ACL 不含 anon/authenticated/PUBLIC（达成）；新建**函数**仍带 `=X`（PUBLIC），`authenticated` 调用返回 `value=42`（**未达成，ISS-059**）。
+- 总验收（单查询）：`bad_table_grants=0 / bad_func_grants=0 / bad_seq_grants=0 / leftover_tables=0 / leftover_funcs=0 / devices=0`。
+- 新问题：ISS-059（P1，函数默认 PUBLIC 撤不掉）、ISS-060（P2，平台 admin 角色默认授权不可改，实测 `42501`）、ISS-061（P2，第 1 步漏序列，已补）、ISS-062（P1-产品，管理员删改的语义边界待定）。
+- 新增文档：`docs/PERMISSION_HARDENING_2026-10-25.md`（9 节：结论 / 权限矩阵 / 可复跑 SQL / 证据 / 3 个新问题 / 给 Codex 的 5 条门禁 / 核验 SQL / 回滚 / 未做项）、`docs/ADMIN_CAPABILITY_2026-10-25.md`（9 节：3 条硬约束 / 身份模型 / A·B·C 路线 / 迁移骨架 / RLS 集成 / Codex 改动清单 / A1–A7 验收 / 待定 3 项）。
+- 回滚脚本：`cloudbase/rollback/20261025_revoke_grants_rollback.sql`（**会重新打开 ISS-054/057**，仅故障排查用）。
+- 未执行：启用 RLS、创建策略、v2 迁移、任何应用代码改动。
+- 状态及下一步：等 Codex 完成 §4.0 带真 Key 的 RPC 实测与代码改造；管理员需求需用户先定三件事（删的语义 / 改的范围 / 是否可恢复），定了之后与 v2 迁移同批上线。未提交 Git。
+
+
+### REQ-0125 · 2026-10-25 · Codex · 移除 AI 文字模型配置及关键词扩展（进行中）
+
+- 用户要求删除配置 AI API Key 的整个栏目并放弃该服务；定位为文字模型与自定义 API 模块及其关键词扩展调用。保留独立的图片、音乐和历史服务。
+- 已读执行规则、双方最新记录（Codex0123 / WorkBuddy0124）及真实代码。main/fea548e dirty；哈希基线和Git状态保存在本机忽略证据目录。没有发现当前同文件进行中的新任务；旧临时0118的进行中标题已由0120收尾，不重复实施云迁移。
+- 本轮只做本地停用及回归验证，不调用真实提供商、不清除旧凭据或业务记录、不部署或变更云权限。实际结果收尾追加。
+
+- REQ-0125 收尾：文字模型/自定义API整块配置与关键词扩展已移除，桌面四IPC和网页四action关闭；保留图片/音乐/同步与手动历史查询。删除组件及修正文案/说明，不清除用户凭据和历史，不变更云权限/数据库或调用真实服务。
+- 本轮验证：最终前端41/41、Rust20/20、后端19/19、desktop构建1601模块/14.82秒与隔离Edge栏目/无模型IPC/1180和1440布局通过；初次沙箱限制、加载时序及HTTP断言失败均保留证据，修正后复验。Windows安装包、真实提供商和线上未验证，未部署。
+- 交接和同步：主交接、六份记录与三类详细日志已更新，无本地Git提交。首次公开预检发现既有远端日志前缀与本地独立记录分叉；已只读比较，保留远端前缀并接回本地独立记录，既有相同段落只保留一次，未覆盖双方内容或强推。仅对脱敏日志及既有批准主页图重试白名单同步，回执另补；源码、交接和新截图不公开。
