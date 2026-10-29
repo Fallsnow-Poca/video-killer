@@ -1673,3 +1673,56 @@
 - 在WorkBuddy项目入口加入任务单指针，更新唯一主交接/六记录/三类日志，并提供可粘贴启动指令。不假称客户端已加载/已登录/已接单，当前没有消息派发或云管理工具。已有授权延续，重要未覆盖动作先备可复核材料再一次确认，不扩大为清库清桶/关RLS/付费测试。
 - 本轮仅文档/入口指针，无业务源码/运行配置/SQL/代码包变化、无云请求/写入/测试/构建/部署或提供商调用。文档/链接/版本范围验证及公开脱敏请求日志回执见主交接，任务单/源码/截图不公开。
 - 文档/范围验证退出0：13UTF-8/28相对链接、309基线300未变/9记录及指针修改4新增/0删除冲突，HEAD相同；既有业务源码/清单/私有包保持不变。任务单已交付不等于WorkBuddy已读或已执行，仍需其实际接单回执。
+
+### REQ-0154 · 2026-10-29 · WorkBuddy接单：W0 通过、W1 健康入口已验收，素材业务未接通
+
+- 用户要求读取 `docs/WORKBUDDY_CLOUD_MATERIAL_HANDOFF_2026-10-29.md`、遵守项目规则、核对当前代码与云端状态并按 W0–W10 接续执行，已完成的不重做，每阶段写回主交接。开工 `main`/`fea548e1e819ffca7643567c5347776aafa14a64`，dirty 保留、无冲突、无提交；基线证据 `.local-tools/logs/req-0154/`。
+
+- **W0 完成**：具备账号级 CloudBase 管理通道（MCP，`credential_scope=account`）。实查环境 `fallsnow-d4gwz9mht57ea9014` / `ap-shanghai` / baas 体验版；函数 `sourcelens-material-api` 为 HTTP / Nodejs24.11 / 端口 9000 / 256MB / 初始化 65s / 执行 30s / 无环境变量 / 无 VPC / 无触发器 / Active。**下载云端包比对：`index.js`、`package.json`、`scf_bootstrap` 与本地 `server/materials/function/` 逐字节相同**，说明线上跑的是 0151 入口而非模板 HelloWorld；包内另含模板脚手架（记录为 ISS-067）。旧三条 `/api/*` 路由仍 `Enable=false`，未受影响。
+
+- **W1 通过**：新建唯一云变更 `/healthz` → `WEB_SCF sourcelens-material-api`（`EnablePathTransmission=true`、`auth=false`、`Enable=true`，CreateTime 2026-10-29T17:35:15+08:00）。无凭据 `GET https://fallsnow-d4gwz9mht57ea9014-1499380185.ap-shanghai.app.tcloudbase.com/healthz` → **HTTP 200**，`service=sourcelens-material-api`、`stage=connection-check`、`materialApiImplemented/cosConnectionVerified/searchIndexReady` 全 false；HEAD 200、POST 405；`/v1/materials` 与 `/readyz` 网关 404。
+
+- 本轮未上传/未读取素材、未读云端 COS 凭据、未调真实提供商；未改函数代码与权限、未动旧路由/旧函数、无数据库 DDL/DCL；无前端/后端/Rust 源码改动，故未跑 `npm test`/`npm run build`/`npm --prefix server test`/`cargo test`，不引用历史 51/32/20。新增问题 ISS-067（云端包混入模板文件，后续改用私有 ZIP 部署并核 `CodeSha256`）、ISS-068（未实现路径 404/503 语义不一致）、ISS-069（同函数后续承载业务前必须先有鉴权，否则会随路由匿名可达）。
+
+- 状态口径：**入口已验收，素材业务未接通**。下一步 W2：在 `server/materials/` 实现认证适配与业务契约、先加鉴权再开业务路径，健康保持公开。
+
+#### W2 · 素材服务契约与运行承载（本地代码侧）
+
+- 新增 `server/materials/` 五个模块：`contract.mjs`（常量/校验/错误码/未就绪信封，3794B）、`auth.mjs`（Bearer 严格解析、SHA-256 哈希、常量时间比较、端口注入式认证器、只存哈希的内存注册表，3944B）、`catalog.memory.mjs`（5556B）、`service.mjs`（业务九法 + 状态机 + 幂等，6169B）、`http.mjs`（路由/方法限制/鉴权前置/统一错误信封，6597B）；新增 4 个契约测试文件；`server/package.json` 的 `test` 并入 `materials/test/*.check.mjs` 并加 `test:materials`。
+- 三条写进代码的硬约束：①健康公开、业务默认拒绝（无 service 时业务一律 503 `MATERIAL_SERVICE_NOT_READY`，不开放空壳入口）；②业务分支在 `switch` 前不读 body，一律先过认证（对应 ISS-069）；③错误信封只含 `code`+`service`，不回显 token/objectKey/路径/入参。
+- **首轮测试 24 条里 4 条失败，全部如实保留**：F1–F3 同一个根因——`handler` 里 6 处写成 `return allow(...)` 缺 `await`，async 路由的 reject 逸出 `try/catch` 变成 `unhandledRejection`，**401/415/503 全部发不出去**；F4 是**断言本身不可满足**（用 `'a'×64` 当 `tokenHash`，而它本身就是合法 64-hex，与摘要无法按形状区分）。
+- 处置：F1–F3 改 `return await allow(...)` 并注明原因；F4 **不改代码迁就测试、也不删测试**，把断言改成真正可实现的保证（拒绝明文字段名 `token`/`rawToken`/`tokenPlaintext`/`secret`/`password`、拒绝非 64-hex、拒绝大写、拒绝空 `deviceId`），并把 64-hex 二义性登记为 ISS-070；`await` 缺陷登记为 ISS-071（已修，留作回归知识）。
+- 修复后实测：materials **24/24 通过（exit 0）**；server 全量 **64/64 通过（exit 0）**（既有 40 条未回归）。证据 `.local-tools/logs/req-0154/w2-materials-tests-before-fix.txt`、`w2-materials-tests.txt`、`w2-server-full-tests.txt`、`w2-README.txt`。
+- **刻意未做**：未改 `server/materials/function/index.js`（接新 handler 需要 W3 认证适配 + W4 COS 适配，现在接上去线上观测不到差异却会让「已部署 = 已实现」失真）；未部署、未调云、未动数据库；`search`/`getSearch`/`content` 按契约固定 503 属 W6。
+- 未跑 `npm test`（前端）/`npm run build`/`cargo test`/`tauri build`：本轮无前端与 Rust 改动，不得引用历史 51/20/1602。`scripts/package-material-entry.py` **不需要**重跑——它只收 `function/` 下 8 个文件，本轮该目录零改动，0151 包 SHA 仍为 `2edbd6d6…5b25`。
+- 状态口径：**W2 完成 =「契约与承载已实现并通过 64 条本地测试，云端入口仍只回答健康」**。下一步 W3：身份/同意/目录与 RLS，本地隔离库先验证，生产迁移留回滚材料、经确认才执行。
+
+#### W3–W8 + W10 · 数据层/服务实现/部署/旧项目退役（用户指令：`开始，直至全部完成`）
+
+- **W3 数据层已完成并应用**：`cloudbase/migrations/20261029100000_materials_catalog.sql` 建 4 表（`materials`/`material_jobs`/`material_features`/`material_consents`）、11 个 `material_*` 函数、RLS enable+force、6 条策略，`revoke all` 后仅授 `service_role`；owner 一律由 `p_token_hash` 经 `material_owner_of()` 派生，函数不接受 owner 入参。迁移经 `applyMigration` 应用（TaskId `task-bb772f9aab244742`），21 项校验包在回滚事务中全部通过，应用后 4 表 0 行。回滚脚本 `cloudbase/rollback/20261029_materials_catalog_rollback.sql` 已备（不删 COS 对象）。
+- **W4–W6 代码完成**：`media.mjs`（容器字节识别、GIF 帧数、像素预算）、`search.mjs`（汉明距离、双 hash 取最优、精确命中优先）、`gateway.mjs`（网关 RPC + 错误映射）、`catalog.postgres.mjs`（端口实现 + 跨设备拒绝）、`storage.mjs`（COS 端口，支持复用运行时角色临时凭据，只暴露 `credentialsSource`）、`indexer.mjs` + `worker/index_features.py`（本地 venv 实测 3 张合成图 hash 互不相同）、重写 `catalog.memory.mjs`/`service.mjs`，`http.mjs` 增 `/consent`、`/search`、`/:id/content` 并拒绝 absolute-form URL。
+- **W8 部署**：`scripts/package-material-service.py` 按仓库树镜像打包，第 1 次 SHA `40e1097c…` 部署后**所有请求 443**——线上 `scf_bootstrap` 是 76B/CRLF，日志 `[./scf_bootstrap] no such file or directory`；修正为 72B/LF 后第 4 次 `59e9799b…` 部署成功，`/healthz` 200 且 `stage=material-api`。脚本已加两道断言防回归（ISS-072）。
+- **网关补路由**：`/v1/materials`、`/readyz` 在只存在 `/healthz` 路由时被边缘拒为 404 `INVALID_PATH`；补建两条 WEB_SCF 路由（透传开）后正常（ISS-076）。
+- **W10 旧项目退役完成**：三个旧函数先备份至 `.local-tools/backup/wordworld-retire-20261029/`，SHA256 与云端 `CodeSha256` 逐字节一致，包内命中 wordworld 标识、`Triggers=[]`、无环境变量；随后删除 `/api/health`、`/api/assets`、`/api/favorites` 三条路由与三个函数。删后 `/api/*` 全 404，`listFunctions` 仅剩 `sourcelens-material-api`。
+- **测试**：`node --test "server/test/*.check.mjs" "server/materials/test/*.check.mjs"` → **95/95 通过（exit 0）**（materials 68 + server 27）。前端 `npm test`/`npm run build`/`cargo test` 未跑：本轮前端与 Rust 零改动。
+- **唯一阻塞（需用户操作）**：函数环境变量缺 `MATERIAL_DB_KEY`（网关 API Key，映射 `service_role`）。它是密钥，只能由用户本人在控制台写入函数环境变量；在它注入前 `buildService()` 返回 `DATABASE_NOT_CONFIGURED`，`/v1/materials` 一律 503。非秘密变量 `MATERIAL_DB_URL`/`COS_ENABLED`/`COS_BUCKET`/`COS_REGION`/`COS_PREFIX` 已写入；COS 改用运行时角色临时凭据（实测 `runtimeCredentialPresent=true`），不再另配长期密钥。
+- **未做**：W7 桌面桥（服务未装配时接入无法验收，排在 W9 后）、W9 真实云闭环（A 投稿→索引 ready→B 检索→受控取图）、worker 上云（函数内无 Python，`search` 诚实返回 503 `INDEX_EXTRACTOR_NOT_PROVISIONED`）。
+- 新增问题：ISS-072（CRLF bootstrap → 443，已修）、ISS-073（部署后首请求仍 443 的冷启动窗口）、ISS-074（运行时凭据到期时间只能假设）、ISS-075（RLS 在 `service_role` 下不生效，隔离实际靠函数）、ISS-076（网关按前缀逐条建路由，已补）。
+- 状态口径：**W3–W8 代码与部署完成、W10 退役完成；线上仅健康入口通过验收，素材业务闭环未通过。**
+
+### REQ-0155 · 2026-10-29 · 最新版源码桌面快捷方式已创建并启动验证
+
+- 用户要求随时从桌面打开最新版应用。已读取最新WorkBuddy0154实际源码/任务记录，保留其后端/云端工作；仅新增本机启动/快捷方式脚本，不启动旧安装包或改动云功能。正式编号0155，开工临时raw先用0154后发现占号，后续证据统一req-0155/。
+- 当前无source-lens实例，已有Node/Cargo/Tauri CLI/图标。快捷方式将固定项目工作目录，从当前源码Tauri dev启动，隐藏启动终端并防重复；桌面写入和真实启动验收待补。
+
+- 已新增源码启动器/快捷方式创建回读脚本与说明，桌面SourceLens - Latest.lnk已创建，COM目标/工作目录/图标回读通过；每次从本机当前项目源码Tauri dev启动，不运行旧安装包、不自动拉取源码或改全局环境。同项目mutex防重复，已有窗口恢复，缺依赖/占端口等给出提示而不杀用户进程。
+- 首次PowerShell预检因中文JSON默认编码失败，显式UTF-8修复后通过。实际调用lnk，开发编译2.60秒成功/16项既有warning，窗口可见/有响应、本机开发页HTTP200；重复点击同一应用PID/日志数不变。UIA定位未通过，保留失败；用目标窗口私有截图目视确认上传素材入口/页面，不将截图公开或伪称UIA通过。应用保持打开。
+- 本轮无前端/Rust/后端/云配置/SQL/素材操作，不重跑应用单测或生产构建，仅开发编译与启动检查；WorkBuddy0154现有业务改动保留，未独立复验其云完成声明。关闭退出/占端口/缺依赖等异常分支未逐一实测。收尾文件范围/编码验证和公开请求日志回执见主交接。
+- 收尾检测到并行执行者修改lib.rs并新增drafts.rs，非本轮更改，完整保留并单列；此前启动/窗口证据不作为这些新Rust代码的测试通过。源码监视器可能自动重编译，后续PID变化须与重复点击区分，不强制关闭用户窗口。
+- 已看到另一个REQ-0156草稿功能进行中记录，随后还有App/DraftEditor等源文件与素材服务入口的并行更新；不追逐或回退其变化。收尾校验改为只验证本任务脚本/记录/快捷方式证据，其他文件逐项列为并行观察、未测试，不宣称工作区冻结或其功能通过。
+- 本任务限定校验退出0：14UTF-8/2相对链接、8记录修改/6新增、0基线删除/冲突；两份PowerShell脚本解析通过，桌面COM回读/防重复/窗口可见证据齐全。并行源文件清单留verification.json，非本任务测试成果；HEAD不变。公开脱敏请求日志同步回执见主交接。
+
+
+### REQ-0156 · 2026-10-29 · 接入视频剪辑脚本与剪映草稿（进行中）
+
+- 用户要求将此前分析的草稿功能加入应用；当前主线为本地桌面，新增本地拆解/脚本编辑/草稿导出，不修改0154云服务或0155启动脚本，不调用真实提供商。
