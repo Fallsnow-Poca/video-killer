@@ -1762,3 +1762,44 @@
 ## REQ-0160 · 2026-10-29 · 删除服务/API页面并停用外部识别
 
 用户要求删除截图服务/API内容，并明确选择同时停用外部识别。已删除服务页/国内外目录/配置组件、演示设置页和恢复settings路由，移除Vision/AudD状态灯及记忆库设置跳转；native取消search_image/search_frames/identify_music和供应商页面IPC注册，实际provider入口拒绝调用/新Key配置，CSP移除两供应商域；旧web接口410、真实provider即使enabled仍拒绝。保留云素材/历史、本地抽帧/草稿/既有结果和旧凭据，不做数据清理。本轮未真实调用提供商/云部署/DB操作。前端50/Rust27/后端112和desktop1600模块9.27秒通过；首轮沙箱限制/残留跳转/旧测试预期失败保留，已修复。线上/安装包/真实桌面目视未验证。
+
+
+## REQ-0161 · 2026-10-31 10:05:29 +08:00 (Asia/Shanghai) · 标签召回 / XFeat / 联网图搜图方案评估（进行中）
+
+- 用户要求核验三级图片检索方案、比较现有方案、分析风险与改进，并推荐开源打标签项目供选型。本轮限架构研究与文档，不安装模型、不改应用、不联网搜用户图片、不部署。
+- 已读Codex0160与WorkBuddy0154、实际检索代码。main/fea548e dirty；保留既有未提交内容。
+
+
+### REQ-0161 最终结果 · 2026-10-31 10:07:48 +08:00 (Asia/Shanghai)
+
+完成三级检索可行性研究：推荐标签/向量/哈希多路召回后 XFeat 几何精排，联网需独立同意；核验 eSearch 为搜索引擎上传与结果页适配，非结构化搜索后端。比较 RAM++、Chinese-CLIP、OpenCLIP、Florence-2、WD Tagger。仅文档，未改应用/配置、安装模型、测试应用、上传图片或部署。 已提供风险改进、索引流程与离线对照验收方案；效果与速度未实测，等待用户选型。无应用代码或配置变更。
+
+- REQ-0161 同步回执：GitHub SSH 443连接超时，预检未通过，未发布；本地记录保留，远端副本尚未更新。
+
+
+## REQ-0162 · 2026-10-31 10:27:41 +08:00 (Asia/Shanghai) · 表情包素材标签模型选型更正（进行中）
+
+用户明确素材偏表情包。本轮修正0161通用图像假设，研究中文配字/情绪/用途/梗意与模板身份分离；仅答复和文档，不安装/运行模型，不改应用或部署。已读Codex0161、WorkBuddy0154最新19:20详细记录，main/fea548e dirty保留，无冲突；基线req-0162/baseline.json。
+
+
+### REQ-0162 最终结果 · 2026-10-31 10:29:28 +08:00 (Asia/Shanghai)
+
+用户更正素材偏表情包。修正0161默认选型：优先试Qwen3-VL-4B-Instruct生成结构化中文标签，Chinese-CLIP辅助召回，OCR按需校对；WD仅动漫分支，RAM++不再默认主选。配字、情绪用途与主体分开，同模板换字与同用途检索分别验收。未选定最终模型、未安装或运行模型、未改应用/配置、未部署。 已给出中文配字/反讽/模板变体的风险与小样本验收方法；效果未实测。公开请求日志同步结果另记。
+
+- REQ-0162 同步结果：SSH预检失败，未发布；本地记录保留，远端副本尚未更新。
+
+
+## REQ-0163 · 2026-10-31 (Asia/Shanghai) · Codex · 进行中
+
+用户要求将当前界面/项目上下文蒸馏为可在下一对话安装使用的 Skill。本轮生成私有可移植 Skill 文档及压缩包，不修改应用、不安装模型、不部署云、不上传素材。已读 skill-creator、项目规则、Codex0162及WorkBuddy0154最新19:20记录，核对实际App/CSS/投稿页/桥接；main/fea548e，384文件基线见.local-tools/logs/req-0163/baseline.json，无合并冲突。最新表情包方案仅建议，云鉴权401/提取器及桌面桥未闭环；保留其他执行者改动。
+
+
+## REQ-0163 · 2026-10-31 11:53:30 +08:00 (Asia/Shanghai) · Codex · 完成（Skill文档及包校验范围）
+
+已将SourceLens桌面界面与上下文蒸馏为可移植sourcelens-desktop-handoff Skill：实际视觉token/布局、截图红X和投稿队列交互、服务页面与外部识别停用、云素材未闭环、表情包标签选型尚未接入、隐私/RLS/日志与真实文件定位。交付单文件SKILL.md、仅含该文档的ZIP及安装/新对话提示说明；未安装到全局技能目录。
+
+- 产物：docs/skills/sourcelens-desktop-handoff/SKILL.md；docs/skills/sourcelens-desktop-handoff.zip；docs/SKILL_INSTALL_2026-10-31.md。
+- 验证：官方quick_validate.py退出0：Skill is valid!；ZIP单文件白名单及解压内容逐字节相等通过；32条项目引用存在、文档链接/UTF-8/范围检查通过，HEAD未变、无合并冲突、应用源码无本轮变更。最初普通python不在PATH、venv启动被环境拒绝；后用已有Python312官方脚本校验成功，无依赖安装。
+- 限制：仅文档与打包校验；前端/后端/Rust测试、应用构建、真实界面启动、跨对话自动发现/加载、云业务与模型效果均未验证（本轮未执行）。没有应用代码/配置/数据库改动、没有素材或真实提供商调用、没有云部署、没有源码提交。
+- 下一步：下一位先读取Skill和项目最新AGENTS/EXECUTION_RULES/AI_HANDOFF双方记录及实际代码，再执行用户当次任务；不要把快照当实时状态，勿恢复服务/API页，勿将云哈希称为XFeat；安装/加载由用户在目标客户端确认。
+- 证据：.local-tools/logs/req-0163/skill-validation.txt、zip-entries.json、zip-verification.txt、verification.json；详细日志logs/development/2026-10-31_115330_REQ-0163_Codex.md。公开同步只涉及脱敏请求日志，回执另记，Skill/私有交接/源码不公开。
